@@ -39,8 +39,10 @@ Layers, each calling only downward:
 - Naming: `lowerCamelCase` for functions, methods, properties and variables; `UpperCamelCase` for classes;
   `UPPER_CASE` only for constants.
 - Use `arguments` blocks for input validation and name-value arguments.
-- Audience is experienced developers: write idiomatic, compact MATLAB. Comment the *why*, not the *what*,
-  and explain DSP math and MATLAB quirks that a developer from other languages wouldn't expect.
+- **Code for experts, comments for students.** Use any idiomatic or advanced MATLAB when it's the best
+  implementation (vectorization, `arguments` blocks, class features, clever indexing). Write comments so a
+  freshman MATLAB student can follow: what each function or block does and why, the DSP idea in plain words,
+  and an explanation of any advanced trick the first time it appears in a file. (PLAN.md decision 6.)
 - Sample rate is never hard-coded: support 44100, 48000 and 96000 Hz, and test DSP at more than one rate.
 - Note velocity is MIDI 1–127 everywhere.
 - No global variables. No `eval`.

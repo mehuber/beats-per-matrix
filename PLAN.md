@@ -429,8 +429,11 @@ All decided by Meghan on 2026-10-20. New open questions go at the end of this se
 4. **CI triggers: every pull request, plus pushes to `main`.** This gives one CI run and one Discord message per push
    to a PR branch. Branches without an open PR aren't tested until a PR is opened.
 5. **The `tests/` folder stays flat,** keeping the official command `runtests('tests')`. File names carry the area.
-6. **Audience: experienced developers.** Write idiomatic, compact MATLAB; comment only what isn't obvious
-   (DSP math, and MATLAB quirks a developer from other languages wouldn't expect). Not aimed at freshman students.
+6. **Audience: code for experts, comments for students.** The code may use any idiomatic or advanced MATLAB
+   (vectorization, `arguments` blocks, class features, clever indexing) when that's the best implementation.
+   Comments must let one of Meghan's freshman MATLAB students follow along: say what each function or block does
+   and why, explain the DSP idea in plain words (e.g. "a low-pass filter lets low frequencies through and quiets
+   high ones"), and spell out any advanced trick the first time it appears in a file.
 7. **Branch protection on `main` is on.** Merging needs a PR, 1 approving
    review (cleared by new pushes), and passing `Tests (base)` + `Tests (full)` checks. No force-pushes or deletion.
    Meghan, as admin, can bypass in an emergency. Because PRs opened on Meghan's machine are authored by her
