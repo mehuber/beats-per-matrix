@@ -4,8 +4,11 @@ classdef DspBiquadTest < BpmTestCase
     % "frequency response" says how much each frequency is boosted or cut).
     %
     % MATLAB features used below:
+    %   properties (TestParameter)  a test that takes fs runs once per rate.
     %   @() expr   makes a small unnamed function; verifyError calls it.
-    %   {:}        "args{:}" spreads a cell array out as separate inputs.
+    %   1j         the imaginary unit (sqrt(-1)), for complex frequency responses.
+    %   methods (Static)  helper functions of this test class, called as
+    %              DspBiquadTest.gainDb(...).
 
     properties (TestParameter)
         fs = {44100, 96000}
@@ -53,6 +56,41 @@ classdef DspBiquadTest < BpmTestCase
             [b, a] = bpm.dsp.biquadCoeffs("allpass", 1000, 0.7, fs);
             for f = [50 500 1000 5000 15000]
                 testCase.verifyEqual(DspBiquadTest.gainDb(b, a, f, fs), 0, "AbsTol", 0.01, "at " + f + " Hz");
+            end
+        end
+
+        function allpassShiftsPhaseHalfACycleAtF0(testCase, fs)
+            % An allpass keeps every level but delays some frequencies more than
+            % others. At f0 its output is exactly half a cycle (180 degrees) behind.
+            [b, a] = bpm.dsp.biquadCoeffs("allpass", 1000, 0.7, fs);
+            % abs(): +180 and -180 degrees are the same angle; rounding picks the side.
+            testCase.verifyEqual(abs(DspBiquadTest.phaseDeg(b, a, 1000, fs)), 180, "AbsTol", 0.1);
+            % What makes a second-order filter allpass: b is a written backwards.
+            testCase.verifyEqual(b, fliplr(a), "AbsTol", 1e-12);
+        end
+
+        function matchesTheCookbookAnalogPrototype(testCase, fs)
+            % The Cookbook designs each filter as an analog filter H(s), then maps
+            % it to digital with the "bilinear transform", pre-warped so that f0
+            % lands exactly at f0. So at any frequency f the digital response must
+            % equal H(s) at s = j*tan(pi*f/fs)/tan(pi*f0/fs). This pins down every
+            % coefficient, including how q and gainDb shape each filter type.
+            for f0 = [200 3000]
+                for q = [0.5 1 / sqrt(2) 2 6]
+                    for g = [-9 6]
+                        for type = ["lowpass", "highpass", "bandpass", "notch", "allpass", ...
+                                "peaking", "lowshelf", "highshelf"]
+                            [b, a] = bpm.dsp.biquadCoeffs(type, f0, q, fs, g);
+                            f = f0 * [0.25 0.5 0.9 1.1 2 4];
+                            s = 1j * tan(pi * f / fs) / tan(pi * f0 / fs);
+                            expected = DspBiquadTest.analogPrototype(type, s, q, g);
+                            z = exp(1j * 2 * pi * f / fs);
+                            actual = polyval(b, z) ./ polyval(a, z);   % H(z), with z^2 factored out
+                            testCase.verifyEqual(actual, expected, "RelTol", 1e-6, ...
+                                sprintf("%s f0=%g q=%g gain=%g", type, f0, q, g));
+                        end
+                    end
+                end
             end
         end
 
@@ -112,6 +150,8 @@ classdef DspBiquadTest < BpmTestCase
             testCase.verifyError(@() bpm.dsp.biquadCoeffs("lowpass", 0, 1, 44100), "MATLAB:validators:mustBePositive");
             testCase.verifyError(@() bpm.dsp.biquadCoeffs("lowpass", 1000, 0, 44100), "MATLAB:validators:mustBePositive");
             testCase.verifyError(@() bpm.dsp.biquadCoeffs("peaking", 1000, 1, 44100, Inf), "MATLAB:validators:mustBeFinite");
+            testCase.verifyError(@() bpm.dsp.biquadCoeffs("lowpass", 1000, Inf, 44100), "MATLAB:validators:mustBeFinite");
+            testCase.verifyError(@() bpm.dsp.biquadCoeffs("lowpass", 1000, 1, 0), "MATLAB:validators:mustBePositive");
         end
     end
 
@@ -123,6 +163,32 @@ classdef DspBiquadTest < BpmTestCase
             h = filter(b, a, [1; zeros(n - 1, 1)]);
             H = sum(h .* exp(-1j * 2 * pi * f / fs * (0:n - 1)'));
             g = 20 * log10(abs(H));
+        end
+
+        function p = phaseDeg(b, a, f, fs)
+            % Measured phase (degrees) of the filter at frequency f, the same way.
+            n = 2 ^ 16;
+            h = filter(b, a, [1; zeros(n - 1, 1)]);
+            H = sum(h .* exp(-1j * 2 * pi * f / fs * (0:n - 1)'));
+            p = angle(H) * 180 / pi;
+        end
+
+        function H = analogPrototype(type, s, q, gainDb)
+            % The Cookbook's analog filters, with f0 scaled to 1 (s = j at f0).
+            A = 10 ^ (gainDb / 40);
+            den = s .^ 2 + s / q + 1;
+            switch type
+                case "lowpass",   H = 1 ./ den;
+                case "highpass",  H = s .^ 2 ./ den;
+                case "bandpass",  H = (s / q) ./ den;
+                case "notch",     H = (s .^ 2 + 1) ./ den;
+                case "allpass",   H = (s .^ 2 - s / q + 1) ./ den;
+                case "peaking",   H = (s .^ 2 + s * (A / q) + 1) ./ (s .^ 2 + s / (A * q) + 1);
+                case "lowshelf"
+                    H = A * (s .^ 2 + (sqrt(A) / q) * s + A) ./ (A * s .^ 2 + (sqrt(A) / q) * s + 1);
+                case "highshelf"
+                    H = A * (A * s .^ 2 + (sqrt(A) / q) * s + 1) ./ (s .^ 2 + (sqrt(A) / q) * s + A);
+            end
         end
     end
 end

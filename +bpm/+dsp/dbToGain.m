@@ -10,6 +10,8 @@ function g = dbToGain(dB)
 %   Example:
 %       bpm.dsp.dbToGain([0 -6 -Inf])   % -> [1 0.5012 0]
 
+    % An arguments block checks the input before the function runs: any array of
+    % doubles, real (not complex) and with no NaN ("not a number") values.
     arguments
         dB double {mustBeReal, mustBeNonNan}
     end

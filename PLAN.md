@@ -404,7 +404,7 @@ up on GitHub as an open (draft) PR that links the issue.
 
 | Order | ID | Task | Issue | Needs first | Status |
 |---|---|---|---|---|---|
-| 1 | V1-07 | DSP helpers: `adsr`, PolyBLEP oscillators, `biquadCoeffs`, `dbToGain`, `panGains`. **Can start now.** | #8 | (none) | ⬜ To do |
+| 1 | V1-07 | DSP helpers: `adsr`, PolyBLEP oscillators, `biquadCoeffs`, `dbToGain`, `panGains` | #8 | (none) | ✅ Done (PR #23) |
 | 2 | V1-16 | `bpm.io.exportWav` (16/24-bit, normalize, clipping warning). **Can start now.** | #17 | (none) | ⬜ To do |
 | 3 | V1-08 | `Synth` instrument | #9 | **V1-05 (Core)**, V1-07 | ⬜ To do |
 | 4 | V1-09 | `DrumSynth` instrument | #10 | **V1-05 (Core)**, V1-07 | ⬜ To do |

@@ -2,14 +2,22 @@ classdef DspOscillatorTest < BpmTestCase
     % Tests for bpm.dsp.polyblepOsc.
     %
     % MATLAB features used below:
+    %   properties (TestParameter)  values a test runs with: a test that takes fs
+    %                               runs once per rate; a test that takes fs AND
+    %                               waveform runs for every combination (2 x 4 = 8).
     %   @() expr      makes a small unnamed function; verifyError calls it and
     %                 checks that it throws the expected error.
     %   "x" + k       + joins text, turning a number k into text first.
+    %   s.(name)      "dynamic field": reads the field whose name is in variable name.
+    %   [~, x] = f()  ~ throws away an output we don't need (here the first one).
+    %   methods (Static)  helper functions that belong to the test class; call
+    %                 them as DspOscillatorTest.peakFrequency(...).
 
     properties (TestParameter)
         fs = {44100, 96000}
         waveform = {"sine", "saw", "square", "triangle"}
         edgy = {"saw", "square", "triangle"}   % the waveforms that need anti-aliasing
+        startPhase = {0, 0.25, 0.5, 0.75}
     end
 
     methods (Test)
@@ -25,8 +33,9 @@ classdef DspOscillatorTest < BpmTestCase
 
         function antiAliasingReducesAliasing(testCase, fs, edgy)
             % A high note (2500.5 Hz) makes aliasing easy to see. Measured improvement
-            % is about 14 dB (saw, square) and 8-10 dB (triangle); require a safe margin.
-            minImprovementDb = struct("saw", 8, "square", 8, "triangle", 5);
+            % over the naive waveform: saw 14.6 / 16.2 dB, square 13.7 / 17.0 dB,
+            % triangle 10.6 / 13.4 dB (at 44.1 / 96 kHz). Require a safe margin.
+            minImprovementDb = struct("saw", 10, "square", 10, "triangle", 8);
             f0 = 2500.5;
             smooth = bpm.dsp.polyblepOsc(edgy, f0, fs, fs);
             naive = bpm.dsp.polyblepOsc(edgy, f0, fs, fs, AntiAlias=false);
@@ -35,9 +44,45 @@ classdef DspOscillatorTest < BpmTestCase
                 sprintf("%s: aliasing only %.1f dB lower than naive", edgy, improvement));
         end
 
-        function antiAliasingKeepsTheWaveformShape(testCase, fs, edgy)
-            % The correction only touches samples next to a jump or corner, so most
-            % samples equal the naive waveform exactly, and the rest stay close.
+        function aliasMeasureHasALowNoiseFloor(testCase, fs)
+            % The measurement itself must not invent aliasing: a pure sine has none.
+            t = (0:fs - 1)' / fs;
+            testCase.verifyLessThan(DspOscillatorTest.aliasDb(sin(2 * pi * 2500.5 * t), 2500.5, fs), -80);
+        end
+
+        function sawJumpSamplesMatchPolyBlep(testCase, fs)
+            % Exact values. dt = 0.1 (fs/10) and phase 0.05 put the samples either
+            % side of the jump exactly half a sample away from it (x = -0.5, +0.5):
+            % before it 2(0.95) - 1 - 0.25 = 0.65, after it 2(0.05) - 1 + 0.25 = -0.65.
+            y = bpm.dsp.polyblepOsc("saw", fs / 10, fs, 12, 0.05);
+            testCase.verifyEqual(y([1 10 11]), [-0.65; 0.65; -0.65], "AbsTol", 1e-12);
+            testCase.verifyEqual(y(2:9), 2 * (0.15:0.1:0.85)' - 1, "AbsTol", 1e-12, "Away from the jump: naive.");
+        end
+
+        function triangleCornerSamplesMatchPolyBlamp(testCase, fs)
+            % Exact values. dt = 1/8 and phase 1/16 put each corner exactly half a
+            % sample from its neighbours, where the PolyBLAMP correction is
+            % 4*dt*(0.5^3)/3 = 1/48 (towards the inside of the corner).
+            e = 1 / 48;
+            y = bpm.dsp.polyblepOsc("triangle", fs / 8, fs, 8, 1 / 16);
+            testCase.verifyEqual(y, [-0.75 + e; -0.25; 0.25; 0.75 - e; 0.75 - e; 0.25; -0.25; -0.75 + e], ...
+                "AbsTol", 1e-12);
+        end
+
+        function squareSampleOnTheJumpIsHalfway(testCase, fs)
+            % dt = 1/8 makes sample 5 land exactly on the falling edge (t = 0.5):
+            % the corrected value is the midpoint of the jump, 0, and never 2.
+            y = bpm.dsp.polyblepOsc("square", fs / 8, fs, 400);
+            testCase.verifyEqual(y(5), 0, "AbsTol", 1e-12);
+            testCase.verifyLessThanOrEqual(max(abs(y)), 1 + 1e-12);
+            testCase.verifyEqual(bpm.dsp.polyblepOsc("square", 440, fs, 1, 0.5, AntiAlias=false), -1, ...
+                "The naive square is -1 from exactly halfway.");
+        end
+
+        function antiAliasingOnlyTouchesSamplesNextToJumps(testCase, fs, edgy)
+            % The correction only changes the sample on each side of a jump or
+            % corner. Next to a jump it moves the sample by up to 1 (halfway across
+            % the jump); next to a corner only slightly.
             f0 = 440;
             smooth = bpm.dsp.polyblepOsc(edgy, f0, fs, fs);
             naive = bpm.dsp.polyblepOsc(edgy, f0, fs, fs, AntiAlias=false);
@@ -45,6 +90,7 @@ classdef DspOscillatorTest < BpmTestCase
             jumpsPerCycle = 1 + (edgy ~= "saw");                 % square/triangle: 2
             testCase.verifyLessThanOrEqual(nnz(changed), 2 * jumpsPerCycle * (f0 + 1), ...
                 "At most 2 samples per jump or corner are changed.");
+            testCase.verifyLessThanOrEqual(max(abs(smooth - naive)), 1 + 1e-12);
         end
 
         function staysWithinPlusMinusOne(testCase, fs, waveform)
@@ -78,6 +124,15 @@ classdef DspOscillatorTest < BpmTestCase
             testCase.verifyEqual(phEnd, phWhole, "AbsTol", 1e-9);
         end
 
+        function blockSizeDoesNotMatterForLongNotes(testCase, fs)
+            % Ten seconds of a 440 Hz saw rendered in 64-frame blocks and in
+            % 1024-frame blocks must agree (block-based instruments rely on this).
+            n = 10 * fs;
+            small = DspOscillatorTest.renderInBlocks("saw", 440, fs, n, 64);
+            large = DspOscillatorTest.renderInBlocks("saw", 440, fs, n, 1024);
+            testCase.verifyEqual(small, large, "AbsTol", 1e-9);
+        end
+
         function returnedPhaseIsWhereTheNextBlockStarts(testCase)
             [~, ph] = bpm.dsp.polyblepOsc("sine", 441, 44100, 25);   % 25 frames = 0.25 cycle
             testCase.verifyEqual(ph, 0.25, "AbsTol", 1e-12);
@@ -106,13 +161,27 @@ classdef DspOscillatorTest < BpmTestCase
             testCase.verifyEqual(ph, phB, "AbsTol", 1e-9);
         end
 
-        function zeroFrequencyHoldsStill(testCase)
-            y = bpm.dsp.polyblepOsc("sine", 0, 44100, 50, 0.25);
-            testCase.verifyEqual(y, ones(50, 1), "AbsTol", 1e-12);
+        function correctionAfterAJumpUsesTheStepThatCrossedIt(testCase)
+            % Frames 1-10 run at dt = 0.1 from phase 0.05, so the jump falls halfway
+            % between frames 10 and 11, crossed by a step of 0.1. Frame 11 is then
+            % half a sample past it (-0.65), even though the frequency triples there.
+            f = [repmat(100, 10, 1); repmat(300, 5, 1)];   % fs = 1000: dt 0.1, then 0.3
+            y = bpm.dsp.polyblepOsc("saw", f, 1000, 15, 0.05);
+            testCase.verifyEqual(y(10:11), [0.65; -0.65], "AbsTol", 1e-12);
+        end
+
+        function zeroFrequencyHoldsStill(testCase, waveform, startPhase)
+            % 0 Hz (for example a stopped LFO) must give a steady, finite value.
+            y = bpm.dsp.polyblepOsc(waveform, 0, 44100, 50, startPhase);
+            testCase.verifyTrue(all(isfinite(y)), "No NaN or Inf.");
+            testCase.verifyEqual(y, repmat(y(1), 50, 1), "Constant.");
         end
 
         function zeroFramesGivesAnEmptyColumn(testCase)
             [y, ph] = bpm.dsp.polyblepOsc("saw", 440, 44100, 0, 0.3);
+            testCase.verifySize(y, [0 1]);
+            testCase.verifyEqual(ph, 0.3);
+            [y, ph] = bpm.dsp.polyblepOsc("saw", zeros(0, 1), 44100, 0, 0.3);
             testCase.verifySize(y, [0 1]);
             testCase.verifyEqual(ph, 0.3);
         end
@@ -125,6 +194,7 @@ classdef DspOscillatorTest < BpmTestCase
             testCase.verifyError(@() bpm.dsp.polyblepOsc("saw", [440; 441], 44100, 10), "bpm:dsp:polyblepOsc:freqSize");
             testCase.verifyError(@() bpm.dsp.polyblepOsc("saw", 440, 44100, 10, 1), "MATLAB:validators:mustBeInRange");
             testCase.verifyError(@() bpm.dsp.polyblepOsc("saw", 440, 44100, 2.5), "MATLAB:validators:mustBeInteger");
+            testCase.verifyError(@() bpm.dsp.polyblepOsc("saw", Inf, 44100, 10), "MATLAB:validators:mustBeFinite");
         end
     end
 
@@ -141,8 +211,11 @@ classdef DspOscillatorTest < BpmTestCase
         function d = aliasDb(y, f0, fs)
             % Energy that is NOT at a true harmonic of f0, relative to all energy, in
             % dB. A true harmonic is a whole multiple of f0 below fs/2; aliasing puts
-            % energy everywhere else. A Blackman-Harris window keeps each harmonic's
-            % energy within a few FFT bins, so we skip +-3 bins around each one.
+            % energy everywhere else. A 4-term Blackman-Harris window spreads each
+            % harmonic over a main lobe +-4 FFT bins wide (outside it, leakage is
+            % below -92 dB). A harmonic can sit halfway between bins (odd multiples
+            % of 2500.5 Hz do), so we skip +-5 bins around each one. A pure sine
+            % then measures about -87 dB (see aliasMeasureHasALowNoiseFloor).
             n = numel(y);
             k = (0:n - 1)';
             w = 0.35875 - 0.48829 * cos(2 * pi * k / (n - 1)) ...
@@ -152,9 +225,19 @@ classdef DspOscillatorTest < BpmTestCase
             f = (0:numel(P) - 1)' * fs / n;
             nearHarmonic = f < 20;
             for h = f0 * (1:floor((fs / 2) / f0))
-                nearHarmonic = nearHarmonic | abs(f - h) <= 3 * fs / n;
+                nearHarmonic = nearHarmonic | abs(f - h) <= 5 * fs / n;
             end
             d = 10 * log10(sum(P(~nearHarmonic)) / sum(P));
+        end
+
+        function y = renderInBlocks(waveform, f0, fs, n, blockSize)
+            % Render n frames in blocks, passing the phase from block to block.
+            y = zeros(n, 1);
+            phase = 0;
+            for first = 1:blockSize:n
+                count = min(blockSize, n - first + 1);
+                [y(first:first + count - 1), phase] = bpm.dsp.polyblepOsc(waveform, f0, fs, count, phase);
+            end
         end
     end
 end

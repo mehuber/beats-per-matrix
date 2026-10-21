@@ -2,10 +2,15 @@ classdef DspAdsrTest < BpmTestCase
     % Tests for bpm.dsp.adsr.
     %
     % MATLAB features used below:
+    %   properties (TestParameter)  a test that takes fs runs once per rate.
     %   @() expr     makes a small unnamed function; verifyError calls it and checks
     %                that it throws the expected error.
     %   env(k + 1)   MATLAB counts from 1, but frames count from 0, so frame k is
     %                element k + 1.
+    %   args{:}      spreads the cell array args out as separate inputs, so
+    %                adsr(args{:}, 10) is adsr(args{1}, args{2}, ..., 10).
+    %   bad{k, 1}    curly braces take the value OUT of row k, column 1 of a cell.
+    %   [~, done]    ~ throws away the first output; we only want the second.
 
     properties (TestParameter)
         fs = {44100, 96000}   % every test that takes fs runs at both rates
@@ -51,7 +56,8 @@ classdef DspAdsrTest < BpmTestCase
         end
 
         function noJumpsAnywhere(testCase, fs)
-            % Linear segments of at least 1 ms never change by more than 1/(1 ms) per frame.
+            % The steepest segment is the 5 ms attack, which rises by 1 over
+            % 0.005*fs frames, so no step between frames may exceed 1/(0.005*fs).
             env = bpm.dsp.adsr(0.005, 0.05, 0.4, 0.2, fs, round(0.3 * fs), fs);
             biggestStep = 1 / (0.005 * fs);
             testCase.verifyLessThanOrEqual(max(abs(diff(env))), biggestStep + testCase.tol);
@@ -72,6 +78,33 @@ classdef DspAdsrTest < BpmTestCase
             env = bpm.dsp.adsr(0, 0, 1, 0, fs, 100, 200);
             testCase.verifyEqual(env(1:100), ones(100, 1));
             testCase.verifyEqual(env(101:200), zeros(100, 1));
+        end
+
+        function fractionalStageLengthsAreExact(testCase)
+            % At 44.1 kHz, 0.1 ms is 4.41 frames: stages need not be whole frames.
+            fs = 44100;
+            env = bpm.dsp.adsr(0.0001, 0, 0.5, 0.1, fs, Inf, 7);
+            testCase.verifyEqual(env, [(0:4)' / 4.41; 0.5; 0.5], "AbsTol", 1e-12, "Fractional attack.");
+            env = bpm.dsp.adsr(0, 0.0001, 0.5, 0.1, fs, Inf, 7);
+            testCase.verifyEqual(env, [1 - 0.5 * (0:4)' / 4.41; 0.5; 0.5], "AbsTol", 1e-12, "Fractional decay.");
+            % Released at frame 20.5 during a 44.1-frame attack and 44.1-frame release.
+            env = bpm.dsp.adsr(0.001, 0, 1, 0.001, fs, 20.5, 24);
+            levelAtRelease = 20.5 / 44.1;
+            testCase.verifyEqual(env(21), 20 / 44.1, "AbsTol", 1e-12, "Frame 20: still held.");
+            testCase.verifyEqual(env(22), levelAtRelease * (1 - 0.5 / 44.1), "AbsTol", 1e-12, "Frame 21: releasing.");
+        end
+
+        function startLevelRestartsTheAttackFromThere(testCase, fs)
+            % A retriggered or stolen voice starts its new attack from its current
+            % level instead of jumping to 0 (which would click).
+            a = 2 * round(0.005 * fs);
+            env = bpm.dsp.adsr(a / fs, 0.1, 0.7, 0.3, fs, Inf, a + 1, StartLevel=0.4);
+            testCase.verifyEqual(env(1), 0.4, "AbsTol", 1e-12);
+            testCase.verifyEqual(env(a / 2 + 1), 0.7, "AbsTol", 1e-12, "Halfway from 0.4 to 1.");
+            testCase.verifyEqual(env(a + 1), 1, "AbsTol", 1e-12);
+            % A release during that attack starts from the level reached.
+            env = bpm.dsp.adsr(a / fs, 0.1, 0.7, 0.01, fs, a / 2, a / 2 + 1, StartLevel=0.4);
+            testCase.verifyEqual(env(end), 0.7, "AbsTol", 1e-12);
         end
 
         function blocksJoinUpExactly(testCase, fs)
@@ -100,6 +133,23 @@ classdef DspAdsrTest < BpmTestCase
             testCase.verifyTrue(done, "Works with StartFrame too.");
         end
 
+        function zeroSustainFinishesAfterTheDecay(testCase, fs)
+            % A drum hit or pluck (sustain 0) is silent for good once the decay ends,
+            % even if the key is never released, so its voice can be freed.
+            a = round(0.001 * fs); d = round(0.2 * fs);
+            [env, done] = bpm.dsp.adsr(a / fs, d / fs, 0, 0.5, fs, Inf, a + d + 1);
+            testCase.verifyTrue(done);
+            testCase.verifyEqual(env(end), 0);
+            [~, done] = bpm.dsp.adsr(a / fs, d / fs, 0, 0.5, fs, Inf, a + d);
+            testCase.verifyFalse(done, "Still decaying one frame earlier.");
+            % Released during the decay: the release decides when it ends.
+            r = round(0.05 * fs); gate = a + d / 2;
+            [~, done] = bpm.dsp.adsr(a / fs, d / fs, 0, r / fs, fs, gate, a + d + 1);
+            testCase.verifyEqual(done, a + d >= gate + r, "Finished only once the release has played out.");
+            [~, done] = bpm.dsp.adsr(a / fs, d / fs, 0, r / fs, fs, gate, gate + r + 1);
+            testCase.verifyTrue(done);
+        end
+
         function alwaysBetweenZeroAndOne(testCase, fs)
             env = bpm.dsp.adsr(0.003, 0.02, 0.25, 0.04, fs, round(0.01 * fs), fs);
             testCase.verifyGreaterThanOrEqual(env, 0);
@@ -115,12 +165,19 @@ classdef DspAdsrTest < BpmTestCase
             ok = {0.01, 0.1, 0.7, 0.3, 44100, Inf, 100};
             bad = {
                 1, -0.01,  "MATLAB:validators:mustBeNonnegative"   % negative attack
+                1, Inf,    "MATLAB:validators:mustBeFinite"        % endless attack
+                2, -0.1,   "MATLAB:validators:mustBeNonnegative"   % negative decay
                 2, Inf,    "MATLAB:validators:mustBeFinite"        % endless decay
                 3, 1.5,    "MATLAB:validators:mustBeInRange"       % sustain above 1
+                3, -0.1,   "MATLAB:validators:mustBeInRange"       % sustain below 0
                 4, -1,     "MATLAB:validators:mustBeNonnegative"   % negative release
+                4, Inf,    "MATLAB:validators:mustBeFinite"        % endless release
                 5, 0,      "MATLAB:validators:mustBePositive"      % zero sample rate
+                5, Inf,    "MATLAB:validators:mustBeFinite"        % infinite sample rate
                 6, NaN,    "MATLAB:validators:mustBeNonNan"        % gate NaN
+                6, -1,     "MATLAB:validators:mustBeNonnegative"   % gate before note-on
                 7, 10.5,   "MATLAB:validators:mustBeInteger"       % fractional frame count
+                7, -1,     "MATLAB:validators:mustBeNonnegative"   % negative frame count
                 };
             for k = 1:size(bad, 1)
                 args = ok;
@@ -128,6 +185,8 @@ classdef DspAdsrTest < BpmTestCase
                 testCase.verifyError(@() bpm.dsp.adsr(args{:}), bad{k, 3}, "Argument " + bad{k, 1});
             end
             testCase.verifyError(@() bpm.dsp.adsr(ok{:}, StartFrame=-1), "MATLAB:validators:mustBeNonnegative");
+            testCase.verifyError(@() bpm.dsp.adsr(ok{:}, StartFrame=0.5), "MATLAB:validators:mustBeInteger");
+            testCase.verifyError(@() bpm.dsp.adsr(ok{:}, StartLevel=1.2), "MATLAB:validators:mustBeInRange");
         end
     end
 end

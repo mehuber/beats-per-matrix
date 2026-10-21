@@ -21,13 +21,21 @@ function [b, a] = biquadCoeffs(type, f0, q, fs, gainDb)
 %           response, -3 dB at f0. (In general those two are q at f0, i.e. 20*log10(q) dB.)
 %   gainDb  boost (+) or cut (-) in dB; used only by peaking and the shelves.
 %
-%   A biquad computes each output sample from the last two inputs and the last
-%   two outputs:
+%   For bandpass and notch, q sets the width: the band between the two -3 dB
+%   points is f0/q wide (roughly). For peaking, it sets the width between the
+%   two points where the boost is half of gainDb. For the shelves, larger q makes
+%   the change from one level to the other steeper (with a small bump).
+%
+%   A biquad computes each output sample from the current input, the two
+%   previous inputs and the two previous outputs:
 %       y(n) = b(1) x(n) + b(2) x(n-1) + b(3) x(n-2) - a(2) y(n-1) - a(3) y(n-2)
 %
 %   Example: a smooth low-pass at 1 kHz for 44.1 kHz audio:
 %       [b, a] = bpm.dsp.biquadCoeffs("lowpass", 1000, 1/sqrt(2), 44100);
 
+    % An arguments block checks each input before the function runs: "(1,1)"
+    % means exactly one value, {mustBe...} lists rules the value must pass, and
+    % "= 0" is the default used when gainDb is left out.
     arguments
         type (1,1) string {mustBeMember(type, ["lowpass", "highpass", "bandpass", ...
             "notch", "allpass", "peaking", "lowshelf", "highshelf"])}
@@ -75,7 +83,9 @@ function [b, a] = biquadCoeffs(type, f0, q, fs, gainDb)
             a = [(A + 1) - (A - 1) * cw + sA, 2 * ((A - 1) - (A + 1) * cw), (A + 1) - (A - 1) * cw - sA];
     end
 
-    % Divide everything by a(1) so that a(1) = 1, the form filter() expects.
+    % Divide everything by a(1) so that a(1) = 1. Then the difference equation
+    % above can be used as written (for example in a hand-written filter loop).
+    % MATLAB's filter() would also accept coefficients without this step.
     b = b / a(1);
     a = a / a(1);
 end

@@ -19,6 +19,36 @@ Add an entry whenever a reviewer or a CI run catches an agent mistake. Newest en
 
 ---
 
+### 2026-10-22: DSP tests that couldn't tell right from wrong (V1-07)
+- **What went wrong:** Several of my DSP tests checked only values that are the same whatever
+  the code does. The bandpass/notch/peaking/shelf tests checked points where q has no effect,
+  so a wrong bandwidth passed. The allpass test checked only level, so a filter that does
+  nothing passed. And the aliasing measurement skipped ±3 FFT bins around each harmonic when
+  the window spreads a harmonic over ±4, so the measurement's own error (about −55 dB) hid a
+  wrong triangle formula. Its comment was wrong too.
+- **How it was caught:** Automated pre-merge review of PR #23 (mutation testing: 21 of 85
+  mutants survived; skeptic agents confirmed each by experiment).
+- **Fix:** PR #23. Every filter type is now compared with the Cookbook's analog formula at many
+  frequencies, q values and gains. There's an allpass phase test, and the aliasing measurement
+  uses ±5 bins with a test of its own noise floor (−87 dB). Exact sample-value checks pin the
+  PolyBLEP and PolyBLAMP corrections.
+- **Takeaway:** For each test, ask "which wrong implementation would still pass this?" A test of
+  a measurement needs its own check that the measurement can see the effect it's looking for.
+
+### 2026-10-22: DSP code that worked for the test cases but not for its real callers (V1-07)
+- **What went wrong:** Three assumptions broke down for the code that will call these
+  functions. `adsr` never reported "finished" for zero-sustain envelopes (drums, plucks), so
+  those voices would never be freed. The oscillator's running-sum phase made 64-frame and
+  1024-frame block renders drift apart over long notes. With a changing frequency, the PolyBLEP
+  correction after a jump used the wrong step size.
+- **How it was caught:** Automated pre-merge review of PR #23 (downstream-fitness and
+  DSP-correctness lenses), confirmed by MATLAB experiments.
+- **Fix:** PR #23: a zero-sustain "finished" rule; phase computed by multiplication for a fixed
+  frequency; the previous step used after a jump; and a `StartLevel` option, so the Synth can
+  retrigger or steal a voice without a click.
+- **Takeaway:** Before calling a helper done, walk through how each future caller (task board,
+  "Needs first") will use it: block sizes, long notes, modulation, voice management.
+
 ### 2026-10-21: CI never posted to Discord, and nothing said so
 - **What went wrong:** The repo had no `DISCORD_WEBHOOK` Actions secret, so all 10 CI runs since
   setup skipped the Discord message. The workflow treated a missing secret as normal (it assumed

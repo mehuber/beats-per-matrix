@@ -5,6 +5,7 @@ function [y, phase] = polyblepOsc(waveform, freqHz, fs, numFrames, phase, option
 %   with peaks at -1 and +1. waveform is "sine", "saw", "square" or "triangle".
 %
 %   PHASE is where in the cycle to start: 0 = start of a cycle, 0.5 = halfway.
+%   It is optional (default 0) and must be at least 0 and below 1.
 %   The second output is where the NEXT block should start. Passing it back in
 %   makes consecutive blocks join up seamlessly (PLAN.md decision D5):
 %       [y1, ph] = bpm.dsp.polyblepOsc("saw", 440, 44100, 1024, 0);
@@ -25,6 +26,11 @@ function [y, phase] = polyblepOsc(waveform, freqHz, fs, numFrames, phase, option
 %   bpm.dsp.polyblepOsc(..., AntiAlias=false) gives the plain ("naive")
 %   waveforms, useful for comparison and teaching.
 
+    % An arguments block checks each input before the function runs:
+    %   (1,1) = exactly one value; (:,1) = a column of any length (one number
+    %   counts too); {mustBe...} = rules the value must pass; "= 0" = the default
+    %   used when the input is left out; "exclude-upper" = the range excludes 1.
+    %   options.AntiAlias declares an optional name-value input: AntiAlias=false.
     arguments
         waveform (1,1) string {mustBeMember(waveform, ["sine", "saw", "square", "triangle"])}
         freqHz (:,1) double {mustBeReal, mustBeFinite, mustBeNonnegative}
@@ -47,13 +53,33 @@ function [y, phase] = polyblepOsc(waveform, freqHz, fs, numFrames, phase, option
     % "dt .* ones(numFrames, 1)" turns a single value into one value per frame.
     dt = (freqHz / fs) .* ones(numFrames, 1);
 
-    % t = position within the cycle (0 to just below 1) at every frame.
-    % cumsum adds up dt as we go (a running total); mod(..., 1) wraps back to 0
-    % at each new cycle. steps has one extra entry at the end: the position just
-    % after the last frame, which is where the next block must start.
-    steps = phase + [0; cumsum(dt)];
+    % t = position within the cycle (0 to just below 1) at every frame, and
+    % mod(..., 1) wraps it back to 0 at each new cycle. steps has one extra
+    % entry at the end: the position just after the last frame, which is where
+    % the next block must start.
+    if isscalar(freqHz)
+        % Fixed frequency: frame k is k steps of dt from the start. Multiplying
+        % (rather than adding dt up one frame at a time) avoids building up
+        % rounding error, so rendering in small or large blocks gives (almost)
+        % exactly the same result even for very long notes.
+        steps = phase + (0:numFrames)' * (freqHz / fs);
+    else
+        % Changing frequency: add up each frame's step (cumsum = running total).
+        steps = phase + [0; cumsum(dt)];
+    end
     t = reshape(mod(steps(1:numFrames), 1), numFrames, 1);   % always a column
     phase = mod(steps(end), 1);
+
+    % The PolyBLEP correction on the sample just AFTER a jump measures how far
+    % past the jump it is, in samples: t / (the step that crossed the jump). That
+    % step is the PREVIOUS frame's dt, which matters when the frequency changes
+    % from sample to sample. (The first frame of a block uses its own dt; the
+    % previous block's last step isn't known here. The difference is tiny.)
+    if numFrames > 0
+        dtPrev = [dt(1); dt(1:end - 1)];   % dt shifted down by one frame
+    else
+        dtPrev = dt;                       % nothing to render
+    end
 
     switch waveform
         case "sine"
@@ -61,44 +87,45 @@ function [y, phase] = polyblepOsc(waveform, freqHz, fs, numFrames, phase, option
         case "saw"
             y = 2 * t - 1;                 % ramps -1 -> +1, then drops back
             if options.AntiAlias
-                y = y - blep(t, dt);
+                y = y - blep(t, dt, dtPrev);
             end
         case "square"
             y = ones(numFrames, 1);        % +1 for the first half of the cycle,
             y(t >= 0.5) = -1;              % -1 for the second half
             if options.AntiAlias
-                y = y + blep(t, dt) - blep(mod(t + 0.5, 1), dt);
+                y = y + blep(t, dt, dtPrev) - blep(mod(t + 0.5, 1), dt, dtPrev);
             end
         case "triangle"
             y = 1 - 4 * abs(t - 0.5);      % -1 at the cycle start, +1 halfway
             if options.AntiAlias
                 % Corner size = change of slope. The slope is +-4 per cycle,
                 % i.e. +-4*dt per sample, so each corner changes it by 8*dt.
-                y = y + 4 * dt .* (blamp(t, dt) - blamp(mod(t + 0.5, 1), dt));
+                y = y + 4 * dt .* (blamp(t, dt, dtPrev) - blamp(mod(t + 0.5, 1), dt, dtPrev));
             end
     end
 end
 
-function r = blep(t, dt)
+function r = blep(t, dt, dtPrev)
 % PolyBLEP correction for an upward jump of size 2 at t = 0 (the start of a
 % cycle). It is non-zero only within one sample of the jump. x measures the
 % distance to the jump in samples: 0..1 just after it, -1..0 just before it.
+% ("t(after)" picks out only the elements where the mask "after" is true.)
     r = zeros(size(t));
-    after = t < dt;                        % the sample just after the jump
-    x = t(after) ./ dt(after);
+    after = t < dtPrev;                    % the sample just after the jump
+    x = t(after) ./ dtPrev(after);
     r(after) = 2 * x - x .^ 2 - 1;
     before = t > 1 - dt;                   % the sample just before the jump
     x = (t(before) - 1) ./ dt(before);
     r(before) = x .^ 2 + 2 * x + 1;
 end
 
-function r = blamp(t, dt)
+function r = blamp(t, dt, dtPrev)
 % PolyBLAMP correction for a corner at t = 0: the running total (integral) of
 % the PolyBLEP correction above, which is why it is a cubic instead of a square.
 % Scaled for a change of slope of 2 per sample; callers multiply by (change / 2).
     r = zeros(size(t));
-    after = t < dt;
-    x = t(after) ./ dt(after);
+    after = t < dtPrev;
+    x = t(after) ./ dtPrev(after);
     r(after) = (1 - x) .^ 3 / 3;
     before = t > 1 - dt;
     x = (t(before) - 1) ./ dt(before);
