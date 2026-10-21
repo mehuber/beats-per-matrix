@@ -19,6 +19,21 @@ Add an entry whenever a reviewer or a CI run catches an agent mistake. Newest en
 
 ---
 
+### 2026-10-21: CI never posted to Discord, and nothing said so
+- **What went wrong:** The repo had no `DISCORD_WEBHOOK` Actions secret, so all 10 CI runs since
+  setup skipped the Discord message. The workflow treated a missing secret as normal (it assumed
+  only fork PRs lack secrets): it printed a quiet notice and the "Discord summary" check stayed
+  green. My setup plan listed "one Discord message arrives" as a check, and I never confirmed it.
+  I even told Meghan to wait for a message that could not come.
+- **How it was caught:** Meghan, who noticed no CI message ever arrived. Reading the job log showed
+  `DISCORD_WEBHOOK:` empty and "skipping Discord" on every run.
+- **Fix:** The workflow now fails the "Discord summary" job, with a clear error, when the secret is
+  missing (fork PRs excepted) or Discord rejects the message. It's not a required check, so this is
+  visible without blocking merges. Meghan adds the secret.
+- **Takeaway:** A green check is not proof that a side effect happened. Verify notifications, files
+  and messages end to end (look for the actual message). Make "skipped" loud unless skipping is
+  truly expected.
+
 ### 2026-10-21: A test that could not fail (`rejectsNonJsonParams`)
 - **What went wrong:** The test meant to prove that five kinds of bad plugin setting are
   rejected built each case with `struct("x", {badValues(k)})`. `badValues(k)` (parentheses)
