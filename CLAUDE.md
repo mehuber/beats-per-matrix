@@ -5,11 +5,12 @@
 
 ## Project summary
 Beats Per Matrix is a music production app (a DAW) modeled on Logic Pro, written in MATLAB.
-The agent writes all of the code. Humans review every change through pull requests:
-- **Meghan:** product owner and reviewer. Engineering professor, strong in MATLAB and signal processing,
-  newer to Git.
-- **Thomas:** architecture and code reviewer. Senior software developer, strong in architecture, testing
-  and tooling, newer to MATLAB.
+The agent writes all of the code. Meghan and Thomas each direct their own agent session, in parallel,
+and review each other's changes through pull requests:
+- **Meghan:** product owner and reviewer; drives the **Sound lane**. Engineering professor, strong in
+  MATLAB and signal processing, newer to Git.
+- **Thomas:** architecture and code reviewer; drives the **Core lane**. Senior software developer, strong
+  in architecture, testing and tooling, newer to MATLAB.
 
 The full design, data format, roadmap and recorded decisions are in **`PLAN.md`**. Read it before starting a task.
 If a task conflicts with PLAN.md, stop and ask; don't silently diverge.
@@ -72,6 +73,22 @@ Layers, each calling only downward:
 - Open a PR for every change. Meghan and Thomas review from separate machines.
 - `main` is protected: merging needs 1 approval (new pushes clear it) and passing `Tests (base)` and
   `Tests (full)` checks. PR authors can't approve their own PRs.
+
+## Working in parallel (two people, two agents)
+The to-do list is the **v1 task board in PLAN.md section 8**. Follow it:
+1. **Know whose session this is.** Check `git config user.name` (or ask). Meghan works the **Sound lane**,
+   Thomas the **Core lane**. Only pick tasks from that person's lane, unless they tell you otherwise.
+2. **Pick the next task:** the first ⬜ row in that lane whose "Needs first" tasks are all ✅ Done. If
+   nothing is ready because you're waiting on the other lane, say so and suggest what to do meanwhile.
+   Don't start the blocked task anyway.
+3. **Stay in your lane's folders** (listed in PLAN.md section 8). Never edit the other lane's files.
+   If your task needs a change there, stop and tell your human.
+4. **Branch and PR per task:** branch `v1-NN-short-name` from the latest `main`; open the PR as a draft
+   early, titled `V1-NN: ...`, with `Closes #<issue>`.
+5. **In that PR, set the task's row to `✅ Done (PR #n)`**, and change no other row.
+6. **Before requesting review,** merge the latest `main` into the branch and rerun the tests.
+7. **Interfaces between the lanes** (PLAN.md section 8, "Hand-off points") change only with both people's
+   agreement. Flag any such change at the top of the PR description.
 
 ## No-secrets rule (the repository is public)
 - **Never write URLs, tokens, webhook addresses, API keys, or passwords into any file.**
