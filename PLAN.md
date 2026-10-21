@@ -118,9 +118,12 @@ Project
   lengthBeats     double   (song length; render end if not given)
   tempoMap        TempoMap
   timeSigMap      TimeSignatureMap
-  tracks          Track[]                 (track order = mixer order)
+  tracks          Track[]                 (track order = mixer order; read-only, changed only
+                                           through addTrack / setTrack / removeTrack)
   masterEffects   PluginSpec[]
   masterVolumeDb  double   (0)
+  nextTrackNumber double   (read-only counter for automatic "trk-NNNN" ids; saved so
+                            ids of deleted tracks are never reused, even after reloading)
 
 TempoMap          rows of (beat, bpm). v1: exactly one row at beat 0.
   beatsToSeconds(beats) / secondsToBeats(sec) / beatsToSamples(beats, fs)
@@ -165,8 +168,12 @@ AutomationLane
   interp          "linear" | "step"
 
 PluginSpec
-  type            string  fully qualified class, e.g. "bpm.effects.Delay"
-  params          struct  parameter name -> value (missing = default)
+  type            string  fully qualified class, e.g. "bpm.effects.Delay" (at least one dot)
+  params          struct  parameter name -> value (missing = default). Values: real finite
+                          numbers, logicals or text, scalar or list. Stored in one canonical
+                          form (numbers as double, text as string, lists as rows, every empty
+                          list as []), and decoded JSON passed back through PluginSpec returns
+                          to exactly that form, so a save/load round trip is exact.
   bypass          logical
 ```
 
@@ -185,6 +192,7 @@ mechanism, but it has rules worth reviewing (sealed methods, default object).
   "tempoMap": [{"beat": 0, "bpm": 120}],
   "timeSigMap": [{"bar": 1, "numerator": 4, "denominator": 4}],
   "masterVolumeDb": 0,
+  "nextTrackNumber": 3,
   "masterEffects": [{"type": "bpm.effects.Reverb", "params": {"mix": 0.2}, "bypass": false}],
   "tracks": [
     {
@@ -216,6 +224,24 @@ mechanism, but it has rules worth reviewing (sealed methods, default object).
 ```
 
 `loadProject` checks `formatVersion` and runs migrations when the format changes.
+
+JSON details the loader must handle (found while reviewing V1-01; tracked on the V1-18 issue):
+- JSON has no infinity: a `volumeDb` / `masterVolumeDb` of `-Inf` (silence) is written as
+  `null` and must be read back as `-Inf`.
+- `jsondecode` returns an empty JSON list as `[]` (double), which must become an empty
+  `PluginSpec` / `Track` array before it is assigned.
+- `jsonencode(project)` also writes constant properties (`FORMAT_VERSION`,
+  `SUPPORTED_SAMPLE_RATES`), so `saveProject` should write an explicit struct in the format
+  above rather than encoding the object directly.
+- `formatVersion`, `tracks` and `nextTrackNumber` are read-only outside `Project`, so loading
+  needs a method of `Project` (e.g. a static `fromStruct`) to restore them. Restoring tracks
+  with `addTrack` keeps the id rules; then restore the saved counter.
+- `jsonencode` writes a one-element array (one track, one effect) as a bare object, not a
+  one-element list. `saveProject` must wrap such arrays so lists stay lists, and the loader
+  should accept either form.
+- `PluginSpec` params need no special loader code, as long as specs are rebuilt through the
+  `PluginSpec` constructor: it turns decoded values (char, columns, cells) back into the
+  canonical form.
 
 ---
 

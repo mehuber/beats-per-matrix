@@ -59,6 +59,9 @@ Layers, each calling only downward:
   before `BpmTestCase` fixes the path. Build shared test objects in a `TestClassSetup` method instead.
 - `tests/` is a **flat** folder (`runtests('tests')` does not search subfolders). Name files by area,
   e.g. `ModelProjectTest.m`, `EffectsDelayTest.m`.
+- **See every test fail at least once.** A test that can't fail proves nothing. For validation
+  tests, check that each case really reaches the rule it targets (e.g. break the rule on
+  purpose in a scratch copy and confirm a test fails). See LESSONS.md.
 - Test audio with numeric checks and tolerances (levels, FFT-measured responses, impulse responses),
   not golden WAV files.
 - All tests must pass locally before pushing. CI runs them on every pull request and every push to `main`.
