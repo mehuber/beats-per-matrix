@@ -2,9 +2,10 @@ classdef Track
     %TRACK One track of a song: an instrument, its effects, and its mixer settings.
     %   Like a channel strip on a mixing desk, a track has:
     %
-    %       instrument  the sound source (a PluginSpec), or empty for none
+    %       instrument  the sound source (a PluginSpec), or PluginSpec.empty for none
     %       effects     effects applied in order, left to right (PluginSpec row)
-    %       volumeDb    loudness change in decibels (0 = unchanged, -6 = about half)
+    %       volumeDb    level change in decibels (0 = unchanged; -6 dB halves the
+    %                   signal's amplitude; about -10 dB sounds half as loud)
     %       pan         left/right position: -1 = full left, 0 = center, +1 = full right
     %       mute, solo  mute silences this track; solo silences all the OTHER tracks
     %
@@ -24,12 +25,15 @@ classdef Track
 
     properties
         % Stable unique id within a project, e.g. "trk-0001". Usually left empty
-        % and filled in by Project.addTrack.
-        id (1,1) string = ""
+        % and filled in by Project.addTrack. mustBeNonmissing rejects
+        % string(missing), MATLAB's "no value" marker, which would break lookups.
+        id (1,1) string {mustBeNonmissing} = ""
 
-        name (1,1) string = "Track"
+        name (1,1) string {mustBeNonmissing} = "Track"
 
         % mustBeScalarOrEmpty: either exactly one PluginSpec or none at all.
+        % For "none" use bpm.model.PluginSpec.empty; plain [] is not accepted,
+        % because MATLAB would try to make a PluginSpec out of [].
         instrument bpm.model.PluginSpec {mustBeScalarOrEmpty} = bpm.model.PluginSpec.empty
 
         % (1,:) means "a row": zero or more specs side by side.

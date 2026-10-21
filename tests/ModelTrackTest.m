@@ -2,18 +2,20 @@ classdef ModelTrackTest < BpmTestCase
     % Tests for bpm.model.Track.
 
     properties
-        Synth
-        Delay
-        LowPass
+        synth
+        delay
+        lowPass
+        reverb
     end
 
     methods (TestClassSetup)
         function makeSpecs(testCase)
             % Built here, not as property defaults: defaults are evaluated when the
             % class loads, before BpmTestCase has put the repo root on the path.
-            testCase.Synth = bpm.model.PluginSpec("bpm.instruments.Synth");
-            testCase.Delay = bpm.model.PluginSpec("bpm.effects.Delay");
-            testCase.LowPass = bpm.model.PluginSpec("bpm.effects.LowPass");
+            testCase.synth = bpm.model.PluginSpec("bpm.instruments.Synth");
+            testCase.delay = bpm.model.PluginSpec("bpm.effects.Delay");
+            testCase.lowPass = bpm.model.PluginSpec("bpm.effects.LowPass");
+            testCase.reverb = bpm.model.PluginSpec("bpm.effects.Reverb");
         end
     end
 
@@ -31,16 +33,39 @@ classdef ModelTrackTest < BpmTestCase
         end
 
         function constructsFromNameValueArguments(testCase)
-            t = bpm.model.Track(Name="Lead", Instrument=testCase.Synth, Effects=testCase.Delay, ...
+            t = bpm.model.Track(Name="Lead", Instrument=testCase.synth, Effects=testCase.delay, ...
                 VolumeDb=-3, Pan=0.25, Mute=true, Solo=true, Id="trk-0042");
             testCase.verifyEqual(t.name, "Lead");
-            testCase.verifyEqual(t.instrument, testCase.Synth);
-            testCase.verifyEqual(t.effects, testCase.Delay);
+            testCase.verifyEqual(t.instrument, testCase.synth);
+            testCase.verifyEqual(t.effects, testCase.delay);
             testCase.verifyEqual(t.volumeDb, -3);
             testCase.verifyEqual(t.pan, 0.25);
             testCase.verifyTrue(t.mute);
             testCase.verifyTrue(t.solo);
             testCase.verifyEqual(t.id, "trk-0042");
+        end
+
+        function muteAndSoloAreIndependent(testCase)
+            % Set one at a time, so swapping the two by mistake would be caught.
+            t = bpm.model.Track(Mute=true);
+            testCase.verifyTrue(t.mute);
+            testCase.verifyFalse(t.solo);
+            t = bpm.model.Track(Solo=true);
+            testCase.verifyFalse(t.mute);
+            testCase.verifyTrue(t.solo);
+        end
+
+        function effectsAreAlwaysARow(testCase)
+            % (1,:) turns a column of specs into a row and rejects a matrix.
+            t = bpm.model.Track(Effects=[testCase.lowPass; testCase.delay]);
+            testCase.verifySize(t.effects, [1 2]);
+            testCase.verifyError(@() bpm.model.Track(Effects=[testCase.lowPass testCase.delay; testCase.reverb testCase.synth]), ...
+                "MATLAB:validation:IncompatibleSize");
+        end
+
+        function idAndNameMustNotBeMissing(testCase)
+            testCase.verifyError(@() bpm.model.Track(Id=string(missing)), "MATLAB:validators:mustBeNonmissing");
+            testCase.verifyError(@() bpm.model.Track(Name=string(missing)), "MATLAB:validators:mustBeNonmissing");
         end
 
         function panMustBeBetweenMinusOneAndOne(testCase)
@@ -58,50 +83,67 @@ classdef ModelTrackTest < BpmTestCase
         end
 
         function instrumentMustBeOneSpecOrNone(testCase)
-            testCase.verifyError(@() bpm.model.Track(Instrument=[testCase.Synth testCase.Synth]), ...
+            testCase.verifyError(@() bpm.model.Track(Instrument=[testCase.synth testCase.synth]), ...
                 "MATLAB:validators:mustBeScalarOrEmpty");
             testCase.verifyError(@() bpm.model.Track(Instrument=struct("type", "x")), ...
                 "MATLAB:validation:UnableToConvert");
+            % "None" is PluginSpec.empty; plain [] is rejected (documented in Track.m).
+            testCase.verifyEmpty(bpm.model.Track(Instrument=bpm.model.PluginSpec.empty).instrument);
+            testCase.verifyError(@() bpm.model.Track(Instrument=[]), "MATLAB:validation:UnableToConvert");
         end
 
         function textConvertsToPluginSpec(testCase)
             % MATLAB converts a value to a property's class by calling that class's
             % constructor, so a type name becomes a PluginSpec automatically.
             t = bpm.model.Track(Instrument="bpm.instruments.Synth", Effects="bpm.effects.Delay");
-            testCase.verifyEqual(t.instrument, testCase.Synth);
-            testCase.verifyEqual(t.effects, testCase.Delay);
-            % The type name is still validated during that conversion. MATLAB wraps
-            % our invalidType error in its own "unable to convert" error.
+            testCase.verifyEqual(t.instrument, testCase.synth);
+            testCase.verifyEqual(t.effects, testCase.delay);
+            % An invalid name still fails. MATLAB reports its own generic
+            % "unable to convert" error rather than PluginSpec's invalidType error.
             testCase.verifyError(@() bpm.model.Track(Instrument="not a type"), ...
                 "MATLAB:validation:UnableToConvert");
         end
 
-        function addSetRemoveEffects(testCase)
-            t = bpm.model.Track();
-            t = t.addEffect(testCase.LowPass).addEffect(testCase.Delay);
+        function addEffectAppendsInOrder(testCase)
+            t = bpm.model.Track().addEffect(testCase.lowPass).addEffect(testCase.delay);
             testCase.verifyEqual([t.effects.type], ["bpm.effects.LowPass", "bpm.effects.Delay"]);
+        end
 
-            t = t.setEffect(1, testCase.Delay);
-            testCase.verifyEqual([t.effects.type], ["bpm.effects.Delay", "bpm.effects.Delay"]);
+        function setEffectReplacesOnlyThatIndex(testCase)
+            t = bpm.model.Track(Effects=[testCase.lowPass testCase.delay testCase.reverb]);
+            t = t.setEffect(2, testCase.synth);
+            testCase.verifyEqual([t.effects.type], ...
+                ["bpm.effects.LowPass", "bpm.instruments.Synth", "bpm.effects.Reverb"]);
+        end
 
+        function removeEffectRemovesOnlyThatIndex(testCase)
+            t = bpm.model.Track(Effects=[testCase.lowPass testCase.delay testCase.reverb]);
             t = t.removeEffect(2);
-            testCase.verifyEqual([t.effects.type], "bpm.effects.Delay");
-            t = t.removeEffect(1);
+            testCase.verifyEqual([t.effects.type], ["bpm.effects.LowPass", "bpm.effects.Reverb"]);
+            t = t.removeEffect(1).removeEffect(1);
             testCase.verifySize(t.effects, [1 0]);
         end
 
         function effectIndexMustExist(testCase)
-            t = bpm.model.Track().addEffect(testCase.Delay);
+            t = bpm.model.Track().addEffect(testCase.delay);
             testCase.verifyError(@() t.removeEffect(2), "bpm:model:Track:effectIndexOutOfRange");
-            testCase.verifyError(@() t.setEffect(3, testCase.Delay), "bpm:model:Track:effectIndexOutOfRange");
+            testCase.verifyError(@() t.setEffect(3, testCase.delay), "bpm:model:Track:effectIndexOutOfRange");
             testCase.verifyError(@() t.removeEffect(0), "MATLAB:validators:mustBePositive");
+            testCase.verifyError(@() t.removeEffect(1.5), "MATLAB:validators:mustBeInteger");
+            testCase.verifyError(@() t.setEffect(0, testCase.delay), "MATLAB:validators:mustBePositive");
+            testCase.verifyError(@() t.setEffect(1.5, testCase.delay), "MATLAB:validators:mustBeInteger");
         end
 
         function methodsDoNotChangeTheOriginal(testCase)
-            original = bpm.model.Track(Name="Bass");
-            changed = original.addEffect(testCase.Delay);
-            testCase.verifySize(original.effects, [1 0]);
-            testCase.verifySize(changed.effects, [1 1]);
+            original = bpm.model.Track(Name="Bass", Effects=[testCase.lowPass testCase.delay]);
+            added = original.addEffect(testCase.reverb);
+            replaced = original.setEffect(1, testCase.reverb);
+            removed = original.removeEffect(1);
+
+            testCase.verifyEqual([original.effects.type], ["bpm.effects.LowPass", "bpm.effects.Delay"]);
+            testCase.verifySize(added.effects, [1 3]);
+            testCase.verifyEqual(replaced.effects(1).type, "bpm.effects.Reverb");
+            testCase.verifySize(removed.effects, [1 1]);
         end
     end
 end
