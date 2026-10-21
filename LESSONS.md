@@ -29,7 +29,7 @@ Add an entry whenever a reviewer or a CI run catches an agent mistake. Newest en
   for Thomas. A reviewer *mutation-tested* it: it broke the validator on purpose, and all tests
   still passed.
 - **Fix:** PR #20. The test now uses `p.x = badValues{k}` (curly braces take the value out),
-  covers 19 bad values, and checks each error message names the reason.
+  covers 22 bad values, and checks each error message names the reason.
 - **Takeaway:** A passing test proves nothing until you have seen it fail. For validation
   tests, check each case actually reaches the rule it targets. Mutation checks are cheap.
 

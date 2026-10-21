@@ -122,8 +122,10 @@ Project
                                            through addTrack / setTrack / removeTrack)
   masterEffects   PluginSpec[]
   masterVolumeDb  double   (0)
-  nextTrackNumber double   (read-only counter for automatic "trk-NNNN" ids; saved so
-                            ids of deleted tracks are never reused, even after reloading)
+  nextTrackNumber double   (read-only counter for automatic "trk-NNNN" ids; saved so an
+                            automatic id is never handed out twice, even after its track
+                            is deleted and the project reloaded. Hand-made or re-added
+                            ids, e.g. a cut track pasted back, are accepted if unused.)
 
 TempoMap          rows of (beat, bpm). v1: exactly one row at beat 0.
   beatsToSeconds(beats) / secondsToBeats(sec) / beatsToSamples(beats, fs)
@@ -394,7 +396,7 @@ Each bullet is sized to be one GitHub issue and one PR, and ships with tests.
 | V2-02 | `bpm.ui.Session`: holds Project, undo/redo stack, dirty flag |
 | V2-03 | `bpm.ui.App` shell: main uifigure, menus, transport bar |
 | V2-04 | Transport: render-then-play with `audioplayer`, playhead, loop region |
-| V2-05 | Arrangement timeline view: tracks, regions, drag/resize, snap to grid |
+| V2-05 | Arrangement timeline view: tracks, regions, drag/resize, snap to grid (needs a `Project.moveTrack` / insert-at-position method, since `tracks` is read-only) |
 | V2-06 | Piano roll editor: draw/move/resize/delete notes, velocity lane |
 | V2-07 | Drum step-grid editor for `PatternRegion` |
 | V2-08 | Mixer panel: faders, pan knobs, mute/solo, auto-built plugin parameter panels from `ParamInfo` |
