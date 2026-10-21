@@ -361,7 +361,7 @@ up on GitHub as an open (draft) PR that links the issue.
 
 | Order | ID | Task | Issue | Needs first | Status |
 |---|---|---|---|---|---|
-| 1 | V1-01 | Model skeleton: `Project`, `Track`, `PluginSpec` | #2 | (none) | ⬜ In review (PR #20) |
+| 1 | V1-01 | Model skeleton: `Project`, `Track`, `PluginSpec` | #2 | (none) | ✅ Done (PR #20) |
 | 2 | V1-05 | Plugin base classes: `Plugin`, `Instrument`, `Effect`, `ParamInfo`. **Unblocks the Sound lane, so do it first.** | #6 | V1-01 | ⬜ To do |
 | 3 | V1-02 | `TempoMap` and `TimeSignatureMap` (beat ↔ seconds ↔ samples) | #3 | V1-01 | ⬜ To do |
 | 4 | V1-03 | `Region` base + `NoteRegion` | #4 | V1-01 | ⬜ To do |
