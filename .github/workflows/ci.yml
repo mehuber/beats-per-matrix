@@ -1,0 +1,97 @@
+# CI for Beats Per Matrix.
+# Runs the MATLAB test suite on every push and pull request, in two variants:
+#   base: MATLAB only. Proves the core never depends on a toolbox.
+#   full: MATLAB plus Audio, Signal Processing and DSP System toolboxes, so toolbox-gated tests run.
+# Then posts ONE pass/fail summary to Discord.
+#
+# Secrets: the Discord webhook is read from the DISCORD_WEBHOOK Actions secret. Never write it here.
+# MATLAB licensing: public repositories can use setup-matlab without a license.
+
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+# A newer push to the same branch cancels the older, still-running test run.
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Tests (${{ matrix.variant }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: base
+            products: MATLAB
+          - variant: full
+            products: MATLAB Audio_Toolbox Signal_Processing_Toolbox DSP_System_Toolbox
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up MATLAB R2025a
+        uses: matlab-actions/setup-matlab@v2
+        with:
+          release: R2025a
+          products: ${{ matrix.products }}
+
+      - name: Run tests
+        uses: matlab-actions/run-command@v2
+        with:
+          command: results = runtests('tests'); disp(table(results)); assertSuccess(results);
+
+  notify:
+    name: Discord summary
+    needs: test
+    # Run after success or failure, but not when the run was cancelled by a newer push.
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read   # to read each matrix job's result
+    steps:
+      - name: Post summary to Discord
+        env:
+          DISCORD_WEBHOOK: ${{ secrets.DISCORD_WEBHOOK }}
+          GH_TOKEN: ${{ github.token }}
+          RESULT: ${{ needs.test.result }}
+          BRANCH: ${{ github.head_ref || github.ref_name }}
+          EVENT: ${{ github.event_name }}
+          SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          RUN_LINK: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          if [ -z "$DISCORD_WEBHOOK" ]; then
+            echo "::notice::DISCORD_WEBHOOK secret is not available (e.g. a PR from a fork); skipping Discord."
+            exit 0
+          fi
+
+          case "$RESULT" in
+            success) headline="✅ CI passed" ;;
+            failure) headline="❌ CI failed" ;;
+            *)       headline="⚠️ CI $RESULT" ;;
+          esac
+
+          # Per-variant results, e.g. "base ✅ · full ❌". Lines from the API look like "base=success".
+          job_results=$(gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID/jobs" \
+            --jq '.jobs[] | select(.name | startswith("Tests (")) | "\(.name | ltrimstr("Tests (") | rtrimstr(")"))=\(.conclusion)"' \
+            || true)
+          variants=""
+          while IFS='=' read -r name conclusion; do
+            [ -z "$name" ] && continue
+            case "$conclusion" in success) mark="✅" ;; skipped) mark="⏭️" ;; *) mark="❌" ;; esac
+            variants="${variants:+$variants · }${name} ${mark}"
+          done <<< "$job_results"
+
+          message="${headline} on \`${BRANCH}\` (${SHA:0:7}, ${EVENT})${variants:+ · ${variants}} · <${RUN_LINK}>"
+          echo "$message"
+
+          payload=$(jq -n --arg content "$message" '{content: $content, allowed_mentions: {parse: []}}')
+          curl -sS -m 15 --fail-with-body -H "Content-Type: application/json" -d "$payload" "$DISCORD_WEBHOOK" \
+            || echo "::warning::Discord notification failed."
