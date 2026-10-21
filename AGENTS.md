@@ -55,6 +55,8 @@ Layers, each calling only downward:
 - **Every feature ships with tests** (`matlab.unittest`, class-based, one class per unit).
 - **Every test class inherits from `BpmTestCase`** (`tests/BpmTestCase.m`), not `matlab.unittest.TestCase`.
   `runtests('tests')` changes the current folder to `tests/`, and `BpmTestCase` puts the repo root back on the path.
+- **Never call `bpm.*` code in a test class's property defaults.** Defaults are evaluated when the class loads,
+  before `BpmTestCase` fixes the path. Build shared test objects in a `TestClassSetup` method instead.
 - `tests/` is a **flat** folder (`runtests('tests')` does not search subfolders). Name files by area,
   e.g. `ModelProjectTest.m`, `EffectsDelayTest.m`.
 - Test audio with numeric checks and tolerances (levels, FFT-measured responses, impulse responses),
