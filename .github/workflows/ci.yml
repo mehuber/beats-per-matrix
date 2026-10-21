@@ -68,10 +68,19 @@ jobs:
           EVENT: ${{ github.event_name }}
           SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           RUN_LINK: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          # "true" only for a pull request coming from someone else's fork of the repo.
+          FROM_FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
         run: |
+          # A missing secret must be LOUD (this job turns red), or Discord silently
+          # stops working. Only fork PRs are exempt: GitHub never gives them secrets.
+          # This job is not a required check, so a red X here never blocks a merge.
           if [ -z "$DISCORD_WEBHOOK" ]; then
-            echo "::notice::DISCORD_WEBHOOK secret is not available (e.g. a PR from a fork); skipping Discord."
-            exit 0
+            if [ "$FROM_FORK" = "true" ]; then
+              echo "::notice::Pull request from a fork: GitHub doesn't share secrets with it, so no Discord message."
+              exit 0
+            fi
+            echo "::error title=No Discord message sent::The DISCORD_WEBHOOK Actions secret is missing or empty. Add it in the repo's Settings > Secrets and variables > Actions."
+            exit 1
           fi
 
           case "$RESULT" in
@@ -95,5 +104,7 @@ jobs:
           echo "$message"
 
           payload=$(jq -n --arg content "$message" '{content: $content, allowed_mentions: {parse: []}}')
-          curl -sS -m 15 --fail-with-body -H "Content-Type: application/json" -d "$payload" "$DISCORD_WEBHOOK" \
-            || echo "::warning::Discord notification failed."
+          if ! curl -sS -m 15 --fail-with-body -o /dev/null -H "Content-Type: application/json" -d "$payload" "$DISCORD_WEBHOOK"; then
+            echo "::error title=No Discord message sent::Discord rejected the message or could not be reached (check that the secret holds a valid webhook)."
+            exit 1
+          fi
