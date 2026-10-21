@@ -11,7 +11,7 @@ The agent writes all of the code. Humans review every change through pull reques
 - **Thomas:** architecture and code reviewer. Senior software developer, strong in architecture, testing
   and tooling, newer to MATLAB.
 
-The full design, data format, roadmap and open questions are in **`PLAN.md`**. Read it before starting a task.
+The full design, data format, roadmap and recorded decisions are in **`PLAN.md`**. Read it before starting a task.
 If a task conflicts with PLAN.md, stop and ask; don't silently diverge.
 
 ## Architecture (summary; details in PLAN.md)
@@ -39,7 +39,10 @@ Layers, each calling only downward:
 - Naming: `lowerCamelCase` for functions, methods, properties and variables; `UpperCamelCase` for classes;
   `UPPER_CASE` only for constants.
 - Use `arguments` blocks for input validation and name-value arguments.
-- Favor clear, readable code over clever code. Comment the *why*, not the *what*.
+- Audience is experienced developers: write idiomatic, compact MATLAB. Comment the *why*, not the *what*,
+  and explain DSP math and MATLAB quirks that a developer from other languages wouldn't expect.
+- Sample rate is never hard-coded: support 44100, 48000 and 96000 Hz, and test DSP at more than one rate.
+- Note velocity is MIDI 1–127 everywhere.
 - No global variables. No `eval`.
 
 ## Tests
@@ -54,12 +57,14 @@ Layers, each calling only downward:
   e.g. `ModelProjectTest.m`, `EffectsDelayTest.m`.
 - Test audio with numeric checks and tolerances (levels, FFT-measured responses, impulse responses),
   not golden WAV files.
-- All tests must pass locally before pushing. CI runs them on every push and pull request.
+- All tests must pass locally before pushing. CI runs them on every pull request and every push to `main`.
 
 ## Git workflow
 - **Never commit directly to `main`.** One branch per task/issue, one pull request per branch.
 - Small, focused commits with clear messages.
 - Open a PR for every change. Meghan and Thomas review from separate machines.
+- `main` is protected: merging needs 1 approval (new pushes clear it) and passing `Tests (base)` and
+  `Tests (full)` checks. PR authors can't approve their own PRs.
 
 ## No-secrets rule (the repository is public)
 - **Never write URLs, tokens, webhook addresses, API keys, or passwords into any file.**

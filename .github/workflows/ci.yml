@@ -1,5 +1,5 @@
 # CI for Beats Per Matrix.
-# Runs the MATLAB test suite on every push and pull request, in two variants:
+# Runs the MATLAB test suite on every pull request and every push to main, in two variants:
 #   base: MATLAB only. Proves the core never depends on a toolbox.
 #   full: MATLAB plus Audio, Signal Processing and DSP System toolboxes, so toolbox-gated tests run.
 # Then posts ONE pass/fail summary to Discord.
@@ -9,8 +9,10 @@
 
 name: CI
 
+# Pushes to PR branches are covered by pull_request, so push is limited to main to avoid duplicate runs.
 on:
   push:
+    branches: [main]
   pull_request:
 
 permissions:

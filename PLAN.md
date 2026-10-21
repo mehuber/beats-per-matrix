@@ -99,7 +99,7 @@ Each decision lists what we chose, why, and what we rejected.
 | D7 | **Parameters described by `ParamInfo`** | Each plugin declares name, default, range, unit and scale. The GUI can auto-build knobs, automation can target parameters by name, and validation is shared. | *Free-form properties:* every GUI panel and every automation target hand-coded. |
 | D8 | **Projects saved as JSON** (`jsonencode`/`jsondecode`) | Human-readable, diffs in Git, base MATLAB, versioned with `formatVersion`. | *`.mat` files:* binary, no diffs, tied to class definitions. |
 | D9 | **Stereo everywhere** (`numFrames x 2`) | One buffer shape through the whole engine; mono instruments just write both channels. | *Mono until the mixer:* saves memory but every effect needs two code paths later (stereo reverb, ping-pong delay). |
-| D10 | **Hand-written DSP in the core** | Portable to base MATLAB, and the algorithms stay visible and teachable. | *Toolbox functions* (`designfilt`, `reverberator`): shorter, but excludes users without toolboxes. |
+| D10 | **Hand-written DSP in the core** | Portable to base MATLAB, and the algorithms stay visible and testable. | *Toolbox functions* (`designfilt`, `reverberator`): shorter, but excludes users without toolboxes. |
 
 ---
 
@@ -328,6 +328,7 @@ and every such use is flagged in the PR.
   - Pan law preserves power (`gL^2 + gR^2 == 1`).
   - Muted tracks render silence; soloing one track silences the others.
   - Rendering in blocks of 64 vs 1024 gives the same result (proves block-state handling is right).
+  - DSP tests run at 44100 and 96000 Hz (parameterized), so hard-coded sample-rate assumptions fail.
 - Repo hygiene tests: CLAUDE.md and AGENTS.md are identical, and no tracked file contains webhook URLs or token patterns.
 
 ---
@@ -357,7 +358,7 @@ Each bullet is sized to be one GitHub issue and one PR, and ships with tests.
 | V1-15 | `bpm.engine.render`: offline block renderer with effect tails |
 | V1-16 | `bpm.io.exportWav` (16/24-bit, optional normalize, clipping warning) |
 | V1-17 | `examples/demo_v1.m` plus end-to-end render test |
-| V1-18 | *(proposed, see Open question 1)* `saveProject` / `loadProject` JSON with `formatVersion` |
+| V1-18 | `saveProject` / `loadProject` JSON with `formatVersion` and a round-trip test |
 
 ### v2: GUI, MIDI, more instruments and effects
 
@@ -383,7 +384,6 @@ Each bullet is sized to be one GitHub issue and one PR, and ships with tests.
 
 | ID | Task |
 |---|---|
-| S-01 | Project save/load (if not pulled into v1) |
 | S-02 | Buses and sends (aux tracks, pre/post-fader sends) |
 | S-03 | Automation lanes in the GUI (draw/edit breakpoints) |
 | S-04 | Chorus, distortion, phaser, flanger, and other effects |
@@ -402,7 +402,7 @@ Ratings: **easy**, **hard**, or **probably impractical**, honestly assessed.
 
 | Feature | Base MATLAB | With Audio Toolbox | Why |
 |---|---|---|---|
-| Project save/load | easy | — | JSON plus value classes. **Recommended for v1.** |
+| Project save/load | easy | — | JSON plus value classes. **Moved into v1 (V1-18).** |
 | Buses and sends | easy | — | The offline render graph is ordered by a topological sort; sends are just extra sums. |
 | Chorus, distortion, other FX | easy | — | Offline DSP is MATLAB's strength. Kept hand-written (D10). |
 | Track freezing | easy | — | Cache each track's rendered audio, keyed by a hash of the track's JSON; re-render only on change. |
@@ -418,20 +418,25 @@ real-time path possible (block-based plugins, D5) without betting the project on
 
 ---
 
-## 10. Open questions for Meghan and Thomas
+## 10. Decisions (formerly open questions)
 
-1. **Move project save/load into v1?** (Recommended: yes, as V1-18. It's cheap and makes tests and demos easier.)
-2. **Toolboxes:** Meghan has installed Audio Toolbox, Signal Processing Toolbox and DSP System Toolbox.
-   Will Thomas have the same toolboxes so he can run toolbox tests locally? (Without them, those tests are
-   skipped, not failed.) Keep the `full` CI variant now, or add it when the first toolbox feature lands?
-3. **Velocity scale:** MIDI 1–127 (recommended; matches MIDI files) or 0–1?
-4. **CI triggers:** running on both `push` and `pull_request` gives two CI runs and two Discord messages for PR
-   branches. Keep, or limit `push` to `main`?
-5. **Flat tests folder** (required by `runtests('tests')`), or change the official command to
-   `runtests('tests','IncludeSubfolders',true)` and organize tests by area?
-6. **Audience:** should the code be readable by Meghan's freshman students (favor clarity over cleverness)?
-7. ~~**Branch protection on `main`?**~~ **Decided 2026-10-20 (Meghan):** on. Merging needs a PR, 1 approving
+All decided by Meghan on 2026-10-20. New open questions go at the end of this section.
+
+1. **Project save/load is in v1** (task V1-18), not stretch.
+2. **Toolboxes:** Meghan and Thomas both have Audio Toolbox, Signal Processing Toolbox and DSP System Toolbox,
+   so both run the toolbox-gated tests locally. The `full` CI variant stays on from now on.
+3. **Velocity uses the MIDI scale, 1–127,** matching MIDI files and keyboards (no conversion at import/export).
+4. **CI triggers: every pull request, plus pushes to `main`.** This gives one CI run and one Discord message per push
+   to a PR branch. Branches without an open PR aren't tested until a PR is opened.
+5. **The `tests/` folder stays flat,** keeping the official command `runtests('tests')`. File names carry the area.
+6. **Audience: experienced developers.** Write idiomatic, compact MATLAB; comment only what isn't obvious
+   (DSP math, and MATLAB quirks a developer from other languages wouldn't expect). Not aimed at freshman students.
+7. **Branch protection on `main` is on.** Merging needs a PR, 1 approving
    review (cleared by new pushes), and passing `Tests (base)` + `Tests (full)` checks. No force-pushes or deletion.
    Meghan, as admin, can bypass in an emergency. Because PRs opened on Meghan's machine are authored by her
    account, Thomas approves those, and Meghan approves PRs opened from Thomas's machine.
-8. **Sample rate:** default 44100 Hz. Allow 48000 and 96000 too, or fix one rate for v1?
+8. **Sample rates: 44100 (default), 48000 and 96000 Hz** are all supported. DSP is written in terms of the
+   sample rate, and DSP tests run at more than one rate to catch hard-coded assumptions.
+
+### Still open
+- *(none)*
