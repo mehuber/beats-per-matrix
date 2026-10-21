@@ -1,5 +1,10 @@
 classdef ModelTrackTest < BpmTestCase
     % Tests for bpm.model.Track.
+    %
+    % MATLAB features used below:
+    %   @() expr           makes a small unnamed function; verifyError calls it and
+    %                      checks that it throws the expected error.
+    %   [t.effects.type]   collects the type of every effect into one string row.
 
     properties
         synth
@@ -92,6 +97,17 @@ classdef ModelTrackTest < BpmTestCase
             testCase.verifyError(@() bpm.model.Track(Instrument=[]), "MATLAB:validation:UnableToConvert");
         end
 
+        function noInstrumentIsAlwaysTheSameValue(testCase)
+            % Empties come in many shapes; the track always stores the 0x0 one, so
+            % two tracks without an instrument are equal however it was removed.
+            testCase.verifySize(bpm.model.Track().instrument, [0 0]);
+            t = bpm.model.Track(Instrument=testCase.synth);
+            t.instrument(1) = [];                                   % leaves 1x0 without the rule
+            testCase.verifySize(t.instrument, [0 0]);
+            testCase.verifyEqual(t, bpm.model.Track());
+            testCase.verifyEqual(bpm.model.Track(Instrument=bpm.model.PluginSpec.empty(1, 0)), bpm.model.Track());
+        end
+
         function textConvertsToPluginSpec(testCase)
             % MATLAB converts a value to a property's class by calling that class's
             % constructor, so a type name becomes a PluginSpec automatically.
@@ -132,6 +148,21 @@ classdef ModelTrackTest < BpmTestCase
             testCase.verifyError(@() t.removeEffect(1.5), "MATLAB:validators:mustBeInteger");
             testCase.verifyError(@() t.setEffect(0, testCase.delay), "MATLAB:validators:mustBePositive");
             testCase.verifyError(@() t.setEffect(1.5, testCase.delay), "MATLAB:validators:mustBeInteger");
+            try
+                bpm.model.Track(Name="Bass", Effects=[testCase.delay testCase.reverb]).removeEffect(5);
+            catch err
+                testCase.verifySubstring(err.message, "Track ""Bass"" has 2 effect(s); there is no effect 5.");
+            end
+        end
+
+        function effectMethodsTakeExactlyOneSpec(testCase)
+            t = bpm.model.Track().addEffect(testCase.delay);
+            two = [testCase.delay testCase.reverb];
+            none = bpm.model.PluginSpec.empty;
+            testCase.verifyError(@() t.addEffect(two), "MATLAB:validation:IncompatibleSize");
+            testCase.verifyError(@() t.addEffect(none), "MATLAB:validation:IncompatibleSize");
+            testCase.verifyError(@() t.setEffect(1, two), "MATLAB:validation:IncompatibleSize");
+            testCase.verifyError(@() t.setEffect(1, none), "MATLAB:validation:IncompatibleSize");
         end
 
         function methodsDoNotChangeTheOriginal(testCase)

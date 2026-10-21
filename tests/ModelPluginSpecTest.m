@@ -4,6 +4,13 @@ classdef ModelPluginSpecTest < BpmTestCase
     % Note: verifyEqual on two STRUCTS checks each field's class too ("a" vs 'a'
     % fails), but on two OBJECTS it uses isequal, which treats "a" and 'a' as
     % equal. So tests about stored forms compare spec.params, not the whole spec.
+    %
+    % MATLAB features used below:
+    %   @() expr        makes a small unnamed function; verifyError calls it and
+    %                   checks that it throws the expected error.
+    %   cases{k, 1}     curly braces take a value OUT of a cell array;
+    %                   cases(k, 1) with parentheses would give a 1x1 cell instead.
+    %   "Case " + k     + joins text, turning the number k into text first.
 
     methods (Test)
         function constructsWithDefaults(testCase)
@@ -73,6 +80,7 @@ classdef ModelPluginSpecTest < BpmTestCase
         end
 
         function rejectsBadTypeNames(testCase)
+            % char(233) is the letter e with an accent: not allowed in MATLAB names.
             bad = ["", "Delay", "true", "Delay effect", "1bpm.Delay", "bpm..Delay", ...
                 "bpm.effects.", ".Delay", "bpm.end.Delay", "bpm.effects.D" + char(233) + "lay", string(missing)];
             for k = 1:numel(bad)
@@ -105,6 +113,35 @@ classdef ModelPluginSpecTest < BpmTestCase
             testCase.verifyError(@assignBad, "bpm:model:PluginSpec:invalidType");
         end
 
+        function typeAssignedLaterIsStoredAsString(testCase)
+            spec = bpm.model.PluginSpec("bpm.effects.Delay");
+            spec.type = 'bpm.effects.Reverb';            % char in...
+            testCase.verifyClass(spec.type, "string");   % ...string stored
+            testCase.verifyEqual(spec.type, "bpm.effects.Reverb");
+        end
+
+        function bypassIsCheckedOnLaterAssignment(testCase)
+            spec = bpm.model.PluginSpec("bpm.effects.Delay");
+            spec.bypass = 1;                             % converted to logical
+            testCase.verifyClass(spec.bypass, "logical");
+            function assignTwo()
+                spec.bypass = [true false];
+            end
+            testCase.verifyError(@assignTwo, "MATLAB:validation:IncompatibleSize");
+        end
+
+        function paramsMustBeOneStruct(testCase)
+            spec = bpm.model.PluginSpec("bpm.effects.Delay");
+            function assignStructArray()
+                spec.params = struct("x", {1, 2});       % a 1x2 struct array
+            end
+            function assignNumber()
+                spec.params = 5;
+            end
+            testCase.verifyError(@assignStructArray, "MATLAB:validation:IncompatibleSize");
+            testCase.verifyError(@assignNumber, "MATLAB:validation:UnableToConvert");
+        end
+
         function typeIsRequired(testCase)
             testCase.verifyError(@() bpm.model.PluginSpec(), "bpm:model:PluginSpec:typeRequired");
         end
@@ -127,6 +164,8 @@ classdef ModelPluginSpecTest < BpmTestCase
                 {['a'; 'b']},                   "other than text"
                 {char(zeros(0, 5))},            "other than text"
                 {{'a'}},                        "other than text"
+                {["a" "b"]},                    "other than text"
+                {strings(1, 0)},                "other than text"
                 {'a', 'b'; 'c', 'd'},           "size 2x2"
                 char(zeros(3, 0)),              "size 3x0"
                 struct("a", 1),                 "struct"
@@ -147,7 +186,7 @@ classdef ModelPluginSpecTest < BpmTestCase
             for k = 1:size(badValues, 1)
                 % badValues{k, 1} (curly braces) takes the value OUT of the cell.
                 % badValues(k, 1) (parentheses) would give a 1x1 cell CONTAINING
-                % it, and every case would then only test "a cell is rejected".
+                % it, and almost every case would then only test "a cell is rejected".
                 p = struct();
                 p.x = badValues{k, 1};
                 try

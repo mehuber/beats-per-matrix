@@ -5,6 +5,11 @@ classdef ModelProjectTest < BpmTestCase
     % that tries an assignment, then check that calling it throws the expected
     % error. That's needed because verifyError takes a function to call, and an
     % assignment like p.formatVersion = 2 is a statement, not a function.
+    %
+    % Other MATLAB features used below:
+    %   @() expr        makes a small unnamed function out of an expression, for
+    %                   verifyError to call.
+    %   [p.tracks.id]   collects the id of every track into one string row.
 
     properties (TestParameter)
         % Each test that takes "rate" runs once per value (PLAN.md decision 8).
@@ -56,6 +61,10 @@ classdef ModelProjectTest < BpmTestCase
                 p.sampleRate = 22050;
             end
             testCase.verifyError(@assignBadRate, "MATLAB:validators:mustBeMember");
+        end
+
+        function sampleRateMustBeReal(testCase)
+            testCase.verifyError(@() bpm.model.Project(SampleRate=complex(44100, 0)), "MATLAB:validators:mustBeReal");
         end
 
         function lengthMustBePositiveAndFinite(testCase)
@@ -194,6 +203,26 @@ classdef ModelProjectTest < BpmTestCase
             testCase.verifyEqual(numel(unique([p.tracks.id])), numel(p.tracks));
         end
 
+        function automaticIdsSkipSeveralTakenIdsInARow(testCase)
+            p = bpm.model.Project();
+            for id = ["trk-1000000000000000", "trk-1000000000000001", "trk-999999999999999"]
+                p = p.addTrack(bpm.model.Track(Id=id));
+            end
+            p = p.addTrack(bpm.model.Track());
+            testCase.verifyEqual(p.tracks(end).id, "trk-1000000000000002");
+            testCase.verifyEqual(numel(unique([p.tracks.id])), numel(p.tracks));
+        end
+
+        function trackMethodsTakeExactlyOneTrack(testCase)
+            p = bpm.model.Project().addTrack(bpm.model.Track());
+            two = [bpm.model.Track(Id="a"), bpm.model.Track(Id="b")];
+            none = bpm.model.Track.empty;
+            testCase.verifyError(@() p.addTrack(two), "MATLAB:validation:IncompatibleSize");
+            testCase.verifyError(@() p.addTrack(none), "MATLAB:validation:IncompatibleSize");
+            testCase.verifyError(@() p.setTrack(two), "MATLAB:validation:IncompatibleSize");
+            testCase.verifyError(@() p.setTrack(none), "MATLAB:validation:IncompatibleSize");
+        end
+
         function trackIdsAreCaseSensitive(testCase)
             p = bpm.model.Project().addTrack(bpm.model.Track(Id="drums"));
             testCase.verifyFalse(p.hasTrack("DRUMS"));
@@ -247,6 +276,11 @@ classdef ModelProjectTest < BpmTestCase
             testCase.verifyError(@() p.setTrack(bpm.model.Track(Id="nope")), "bpm:model:Project:trackNotFound");
             testCase.verifyError(@() p.setTrack(bpm.model.Track()), "bpm:model:Project:trackNotFound");
             testCase.verifyError(@() bpm.model.Project().track("trk-0001"), "bpm:model:Project:trackNotFound");
+            try
+                p.track("nope");
+            catch err
+                testCase.verifySubstring(err.message, """nope""", "The message should name the id.");
+            end
         end
 
         function missingIdLookupsGiveAClearError(testCase)

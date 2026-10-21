@@ -13,7 +13,10 @@ classdef Project
     %   Tempo and time signature are added in task V1-02.
     %
     %   The track list can only be changed through methods, so the project can
-    %   guarantee every track has a unique id that is never reused:
+    %   guarantee that no two tracks share an id, and that an automatic id
+    %   ("trk-0001", ...) is never handed out twice, even after its track is
+    %   deleted. (addTrack does accept a hand-made or re-added id, such as a cut
+    %   track pasted back, as long as no current track uses it.)
     %       p = bpm.model.Project(Name="Demo");
     %       p = p.addTrack(bpm.model.Track(Name="Lead"));   % gets id "trk-0001"
     %       lead = p.track("trk-0001");                     % a copy of the track
@@ -24,6 +27,8 @@ classdef Project
     %   This is a value class: every method returns a modified COPY and leaves
     %   the original untouched. That makes undo easy: keep the old copy.
 
+    % Constant properties are fixed values that belong to the class itself;
+    % read them as bpm.model.Project.FORMAT_VERSION.
     properties (Constant)
         % File-format version written into saved projects (PLAN.md section 4).
         FORMAT_VERSION = 1
@@ -41,12 +46,14 @@ classdef Project
         formatVersion (1,1) double = 1
 
         % The tracks, in mixer order. Change them with addTrack / setTrack /
-        % removeTrack, which keep every id unique and never reuse one.
+        % removeTrack, which keep every id unique. Track.empty(1, 0) is a row with
+        % no tracks in it (every class has a built-in "empty" method).
         tracks (1,:) bpm.model.Track = bpm.model.Track.empty(1, 0)
 
         % Number used for the next automatic track id ("trk-0001", "trk-0002", ...).
-        % It only ever goes up, so a deleted track's id is never handed to a new
-        % track. It is saved with the project so this still holds after reloading.
+        % It only ever goes up, so an automatic id is never handed out twice, even
+        % after its track is deleted. It is saved with the project so this still
+        % holds after reloading.
         nextTrackNumber (1,1) double {mustBeInteger, mustBePositive} = 1
     end
 
@@ -57,7 +64,7 @@ classdef Project
         % this file. (MATLAB won't accept a constant as a validator *argument*, as in
         % mustBeMember(sampleRate, Project.SUPPORTED_SAMPLE_RATES), but a validator
         % function may read the constant, so the list lives in one place.)
-        sampleRate (1,1) double {mustBeSupportedSampleRate} = 44100
+        sampleRate (1,1) double {mustBeReal, mustBeSupportedSampleRate} = 44100
 
         lengthBeats (1,1) double {mustBePositive, mustBeFinite} = 16
         masterEffects (1,:) bpm.model.PluginSpec = bpm.model.PluginSpec.empty(1, 0)
@@ -67,6 +74,9 @@ classdef Project
     methods
         function obj = Project(options)
             %PROJECT Create a project. All settings are optional name-value arguments.
+            % An arguments block lists a function's inputs and their defaults.
+            % "options.Name" declares an optional name-value argument, which a caller
+            % writes as Project(Name="Demo"); any that are left out get the default.
             arguments
                 options.Name = "Untitled"
                 options.SampleRate = 44100
@@ -148,6 +158,7 @@ classdef Project
         end
     end
 
+    % Private methods can only be called from inside this class.
     methods (Access = private)
         function index = indexOf(obj, id)
             % Position of the track with this id; error if there isn't one.

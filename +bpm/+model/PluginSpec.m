@@ -31,6 +31,10 @@ classdef PluginSpec
     methods
         function obj = PluginSpec(type, params, options)
             %PLUGINSPEC Create a spec. TYPE is required; PARAMS defaults to no settings.
+            % An arguments block checks (and converts) each input and fills in
+            % defaults; "(1,1) string" means "one string", and char input such as
+            % 'bpm.effects.Delay' is converted to a string. "options.Bypass" declares
+            % an optional name-value argument: PluginSpec(type, params, Bypass=true).
             arguments
                 % TYPE has a placeholder default (string(missing), MATLAB's "no
                 % value" marker) only so that a call with no inputs reaches the
@@ -115,8 +119,10 @@ classdef PluginSpec
             %
             %   Allowed: real, finite numbers; logicals (true/false); text. Each may
             %   be a single value or a list (vector). Not allowed: complex numbers,
-            %   NaN or Inf (JSON can't store them); matrices, structs and other
-            %   types (they don't come back from JSON in the same form).
+            %   NaN or Inf (JSON can't store them); matrices, structs and other types
+            %   (to keep every setting a single value or a list, and because some of
+            %   them, such as text matrices or structs, come back from JSON in a
+            %   different form).
             %
             %   Canonical form:
             %     numbers  -> double (JSON has one number type), lists as rows
