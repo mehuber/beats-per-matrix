@@ -4,6 +4,10 @@ A music production app modeled on Logic Pro, written in plain MATLAB `.m` files.
 This document is the design that Meghan (product owner) and Thomas (architecture reviewer) approve
 before features are built. It changes only through pull requests.
 
+**Working on a task?** The to-do list is the
+[v1 task board](#v1-task-board-who-does-what-in-what-order) in section 8: two lanes,
+one per person, so you can work in parallel.
+
 - **Minimum MATLAB:** R2025a. CI tests against R2025a.
 - **Toolboxes:** none required. Base MATLAB first; optional toolbox features are isolated and flagged
   (see [Toolbox strategy](#6-toolbox-strategy)).
@@ -333,32 +337,125 @@ and every such use is flagged in the PR.
 
 ---
 
-## 8. Roadmap
+## 8. Roadmap and task board
 
-Each bullet is sized to be one GitHub issue and one PR, and ships with tests.
+Each task is sized to be one GitHub issue and one PR, and ships with tests.
 
-### v1: core engine (offline, base MATLAB)
+### v1 task board: who does what, in what order
 
-| ID | Task |
-|---|---|
-| V1-01 | `bpm.model` skeleton: `Project`, `Track`, `PluginSpec` with property validation |
-| V1-02 | `TempoMap` and `TimeSignatureMap` with beat ↔ seconds ↔ samples conversions |
-| V1-03 | `Region` base + `NoteRegion` (notes table, add/remove/sort, validation) |
-| V1-04 | `PatternRegion` (16-step grid) and `toNoteRegion()` |
-| V1-05 | Plugin base classes: `Plugin`, `Instrument`, `Effect`, `ParamInfo` |
-| V1-06 | Plugin `registry()` and `create(spec)` |
-| V1-07 | DSP helpers: `adsr`, PolyBLEP oscillators (sine/saw/square/triangle), `biquadCoeffs`, `dbToGain`, `panGains` |
-| V1-08 | `Synth` instrument: polyphonic voices, waveform choice, ADSR, velocity |
-| V1-09 | `DrumSynth` instrument: synthesized kick/snare/closed hat/open hat/clap on GM drum pitches |
-| V1-10 | `LowPass` effect (RBJ biquad, cutoff + Q, state carried across blocks) |
-| V1-11 | `Delay` effect (ms or tempo-synced, feedback, mix) |
-| V1-12 | `Reverb` effect (Freeverb-style comb + allpass network using `filter` with state) |
-| V1-13 | `Mixer`: volume dB, constant-power pan, mute/solo, master volume |
-| V1-14 | `EventScheduler`: notes → per-block on/off events |
-| V1-15 | `bpm.engine.render`: offline block renderer with effect tails |
-| V1-16 | `bpm.io.exportWav` (16/24-bit, optional normalize, clipping warning) |
-| V1-17 | `examples/demo_v1.m` plus end-to-end render test |
-| V1-18 | `saveProject` / `loadProject` JSON with `formatVersion` and a round-trip test |
+Meghan and Thomas work **in parallel**, each directing their own agent session. v1 is split into
+**two lanes** that touch different folders, so the two people's PRs rarely conflict:
+
+- **Sound lane (Meghan):** DSP helpers, instruments, effects, WAV export, demo song.
+  Owns `+bpm/+dsp/`, `+bpm/+instruments/`, `+bpm/+effects/`, `+bpm/+io/exportWav.m`, `examples/`.
+- **Core lane (Thomas):** data model, plugin framework, mixer, scheduler, renderer, save/load.
+  Owns `+bpm/+model/`, `+bpm/+plugins/`, `+bpm/+engine/`, `+bpm/+io/saveProject.m` and `loadProject.m`.
+
+Tests follow the same split: each task's test files belong to its lane.
+
+**How to read the board:** within a lane, do tasks top to bottom. A task can start once everything
+under "Needs first" is ✅. Status is ⬜ To do or ✅ Done (with the PR). Work that is in progress shows
+up on GitHub as an open (draft) PR that links the issue.
+
+#### Core lane: Thomas
+
+| Order | ID | Task | Issue | Needs first | Status |
+|---|---|---|---|---|---|
+| 1 | V1-01 | Model skeleton: `Project`, `Track`, `PluginSpec` | #2 | (none) | ⬜ In review (PR #20) |
+| 2 | V1-05 | Plugin base classes: `Plugin`, `Instrument`, `Effect`, `ParamInfo`. **Unblocks the Sound lane, so do it first.** | #6 | V1-01 | ⬜ To do |
+| 3 | V1-02 | `TempoMap` and `TimeSignatureMap` (beat ↔ seconds ↔ samples) | #3 | V1-01 | ⬜ To do |
+| 4 | V1-03 | `Region` base + `NoteRegion` | #4 | V1-01 | ⬜ To do |
+| 5 | V1-04 | `PatternRegion` (16-step grid) → `toNoteRegion()` | #5 | V1-03 | ⬜ To do |
+| 6 | V1-18 | `saveProject` / `loadProject` (JSON round trip) | #19 | V1-01 to V1-04 | ⬜ To do |
+| 7 | V1-06 | Plugin `registry()` and `create(spec)` | #7 | V1-05 | ⬜ To do |
+| 8 | V1-13 | `Mixer`: volume, constant-power pan, mute/solo, master | #14 | V1-01, **V1-07 (Sound)** | ⬜ To do |
+| 9 | V1-14 | `EventScheduler`: notes → per-block events | #15 | V1-02, V1-03, V1-04 | ⬜ To do |
+| 10 | V1-15 | `bpm.engine.render`: offline block renderer | #16 | V1-06, V1-13, V1-14 | ⬜ To do |
+
+#### Sound lane: Meghan
+
+| Order | ID | Task | Issue | Needs first | Status |
+|---|---|---|---|---|---|
+| 1 | V1-07 | DSP helpers: `adsr`, PolyBLEP oscillators, `biquadCoeffs`, `dbToGain`, `panGains`. **Can start now.** | #8 | (none) | ⬜ To do |
+| 2 | V1-16 | `bpm.io.exportWav` (16/24-bit, normalize, clipping warning). **Can start now.** | #17 | (none) | ⬜ To do |
+| 3 | V1-08 | `Synth` instrument | #9 | **V1-05 (Core)**, V1-07 | ⬜ To do |
+| 4 | V1-09 | `DrumSynth` instrument | #10 | **V1-05 (Core)**, V1-07 | ⬜ To do |
+| 5 | V1-10 | `LowPass` effect | #11 | **V1-05 (Core)**, V1-07 | ⬜ To do |
+| 6 | V1-11 | `Delay` effect | #12 | **V1-05 (Core)** | ⬜ To do |
+| 7 | V1-12 | `Reverb` effect | #13 | **V1-05 (Core)** | ⬜ To do |
+| 8 | V1-17 | `examples/demo_v1.m` + end-to-end render test | #18 | **V1-15 (Core)**, V1-16, V1-08 to V1-12 | ⬜ To do |
+
+#### Dependencies at a glance
+
+```mermaid
+flowchart LR
+  subgraph Core["Core lane: Thomas"]
+    V101["V1-01 Model"] --> V105["V1-05 Plugin base"]
+    V101 --> V102["V1-02 Tempo maps"]
+    V101 --> V103["V1-03 NoteRegion"]
+    V103 --> V104["V1-04 PatternRegion"]
+    V104 --> V118["V1-18 Save/load"]
+    V102 --> V118
+    V105 --> V106["V1-06 Registry"]
+    V101 --> V113["V1-13 Mixer"]
+    V102 --> V114["V1-14 Scheduler"]
+    V104 --> V114
+    V106 --> V115["V1-15 Renderer"]
+    V113 --> V115
+    V114 --> V115
+  end
+  subgraph Sound["Sound lane: Meghan"]
+    V107["V1-07 DSP helpers"] --> V108["V1-08 Synth"]
+    V107 --> V109["V1-09 DrumSynth"]
+    V107 --> V110["V1-10 LowPass"]
+    V111["V1-11 Delay"]
+    V112["V1-12 Reverb"]
+    V116["V1-16 WAV export"] --> V117["V1-17 Demo"]
+    V108 --> V117
+    V109 --> V117
+    V110 --> V117
+    V111 --> V117
+    V112 --> V117
+  end
+  V105 --> V108
+  V105 --> V109
+  V105 --> V110
+  V105 --> V111
+  V105 --> V112
+  V107 --> V113
+  V115 --> V117
+```
+
+#### Hand-off points between the lanes
+
+These are the only places where one lane waits for the other. Agree on the interface before
+building on it.
+
+1. **V1-05 → Sound lane.** The `Plugin` / `Instrument` / `Effect` / `ParamInfo` interface (PLAN.md
+   section 5) is what every instrument and effect implements. Thomas does V1-05 first; until it is
+   merged, Meghan works on V1-07 and V1-16. Changing that interface later needs both of you to agree.
+2. **V1-07 → V1-13.** The Mixer uses Meghan's `bpm.dsp.dbToGain` and `bpm.dsp.panGains`.
+   V1-07 is first in the Sound lane, so it should be done before Thomas reaches V1-13.
+3. **V1-15 → V1-17.** The demo needs the renderer. V1-15's own tests use a small test-only instrument,
+   so the renderer doesn't wait for the real Synth; the real instruments meet the renderer in V1-17.
+
+#### Rules for working in parallel
+
+- **Stay in your lane's folders.** If your task needs a change in the other lane's files, say so in
+  your PR or ask the other person, rather than editing their files.
+- **One task per branch and PR:** branch `v1-NN-short-name`, PR title `V1-NN: ...`, body `Closes #<issue>`.
+  Open the PR as a **draft early**, so the other person can see what you're working on.
+- **Mark the task done in its own PR:** the PR that finishes a task changes that row's Status to
+  `✅ Done (PR #n)`. Change only your own lane's rows. Because each lane has its own table, the two
+  people's edits never touch neighbouring lines, so PLAN.md doesn't conflict.
+- **Review swaps lanes:** Meghan reviews Core PRs; Thomas reviews Sound PRs. (Branch protection
+  requires one approval from someone other than the author.)
+- **Stay up to date:** merge the latest `main` into your branch before asking for review, so CI
+  tests your work together with everything already merged.
+- **Shared files** (`PLAN.md` outside your rows, `CLAUDE.md`/`AGENTS.md`, `LESSONS.md`, CI): keep
+  edits small and mention them in the PR, since the other person may be editing them too.
+- **Re-balancing:** if one lane runs ahead, a person can take the other lane's next ready task.
+  Agree first, then move the row to your table in the same PR.
 
 ### v2: GUI, MIDI, more instruments and effects
 
