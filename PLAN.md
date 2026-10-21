@@ -430,5 +430,8 @@ real-time path possible (block-based plugins, D5) without betting the project on
 5. **Flat tests folder** (required by `runtests('tests')`), or change the official command to
    `runtests('tests','IncludeSubfolders',true)` and organize tests by area?
 6. **Audience:** should the code be readable by Meghan's freshman students (favor clarity over cleverness)?
-7. **Branch protection on `main`** (require CI to pass plus one approving review)? This is a manual GitHub setting.
+7. ~~**Branch protection on `main`?**~~ **Decided 2026-10-20 (Meghan):** on. Merging needs a PR, 1 approving
+   review (cleared by new pushes), and passing `Tests (base)` + `Tests (full)` checks. No force-pushes or deletion.
+   Meghan, as admin, can bypass in an emergency. Because PRs opened on Meghan's machine are authored by her
+   account, Thomas approves those, and Meghan approves PRs opened from Thomas's machine.
 8. **Sample rate:** default 44100 Hz. Allow 48000 and 96000 too, or fix one rate for v1?
