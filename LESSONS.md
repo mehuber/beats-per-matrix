@@ -19,7 +19,24 @@ Add an entry whenever a reviewer or a CI run catches an agent mistake. Newest en
 
 ---
 
-### 2026-10-22: DSP tests that couldn't tell right from wrong (V1-07)
+### 2026-10-21: My fixes' own tests couldn't fail, and a rounding edge case hid for two rounds (V1-07)
+- **What went wrong:** In round 1, I fixed four things in `bpm.dsp` and added a test for each.
+  Round 2 showed several of those tests couldn't fail. The zero-sustain "release decides" check
+  used numbers where the answer was always true. The block test never reached the release. The
+  jump-step fix was checked for one waveform and one side only. Separately, the square wave had
+  a one-sample spike of +2 from the very first version: `mod(t + 0.5, 1)` rounds the largest
+  number below 0.5 up to a wrap, at ordinary frequencies such as 450 Hz at 44.1 kHz. The
+  triangle's corner correction was also scaled by the wrong step when the pitch changes there.
+  And I wrote "the difference is tiny" in a comment without measuring it (it was up to 0.33).
+- **How it was caught:** Second round of automated pre-merge review of PR #23 (fix check,
+  fresh bug hunt, 46 new mutants), confirmed by skeptic agents.
+- **Fix:** PR #23. The second edge's position is computed without `mod`. The triangle scales each
+  side by its own crossing step. A new `PrevFreqHz` option covers pitch changes at block
+  boundaries. The tests are table-driven and use exact values for every waveform and side.
+- **Takeaway:** A fix's test needs the same "could this fail?" check as any other test: run it
+  against the unfixed code. Never put an unmeasured "tiny" or "small" in a comment.
+
+### 2026-10-21: DSP tests that couldn't tell right from wrong (V1-07)
 - **What went wrong:** Several of my DSP tests checked only values that are the same whatever
   the code does. The bandpass/notch/peaking/shelf tests checked points where q has no effect,
   so a wrong bandwidth passed. The allpass test checked only level, so a filter that does
@@ -35,7 +52,7 @@ Add an entry whenever a reviewer or a CI run catches an agent mistake. Newest en
 - **Takeaway:** For each test, ask "which wrong implementation would still pass this?" A test of
   a measurement needs its own check that the measurement can see the effect it's looking for.
 
-### 2026-10-22: DSP code that worked for the test cases but not for its real callers (V1-07)
+### 2026-10-21: DSP code that worked for the test cases but not for its real callers (V1-07)
 - **What went wrong:** Three assumptions broke down for the code that will call these
   functions. `adsr` never reported "finished" for zero-sustain envelopes (drums, plucks), so
   those voices would never be freed. The oscillator's running-sum phase made 64-frame and

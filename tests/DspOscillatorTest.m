@@ -10,6 +10,9 @@ classdef DspOscillatorTest < BpmTestCase
     %   "x" + k       + joins text, turning a number k into text first.
     %   s.(name)      "dynamic field": reads the field whose name is in variable name.
     %   [~, x] = f()  ~ throws away an output we don't need (here the first one).
+    %   [a, b] = c{k, :}   hands the cells of row k of cell array c out to
+    %                 several variables at once.
+    %   f = @(n1, n2) ...  an unnamed function with inputs n1 and n2.
     %   methods (Static)  helper functions that belong to the test class; call
     %                 them as DspOscillatorTest.peakFrequency(...).
 
@@ -161,13 +164,61 @@ classdef DspOscillatorTest < BpmTestCase
             testCase.verifyEqual(ph, phB, "AbsTol", 1e-9);
         end
 
-        function correctionAfterAJumpUsesTheStepThatCrossedIt(testCase)
-            % Frames 1-10 run at dt = 0.1 from phase 0.05, so the jump falls halfway
-            % between frames 10 and 11, crossed by a step of 0.1. Frame 11 is then
-            % half a sample past it (-0.65), even though the frequency triples there.
-            f = [repmat(100, 10, 1); repmat(300, 5, 1)];   % fs = 1000: dt 0.1, then 0.3
-            y = bpm.dsp.polyblepOsc("saw", f, 1000, 15, 0.05);
-            testCase.verifyEqual(y(10:11), [0.65; -0.65], "AbsTol", 1e-12);
+        function correctionsUseTheStepThatCrossedTheJump(testCase)
+            % At fs = 1000, f = 100 Hz is a step of 0.1 cycles per sample, and 300 Hz
+            % a step of 0.3. A jump or corner between frames k and k+1 is crossed by
+            % frame k's step, and BOTH neighbours' corrections must use that step,
+            % even when the frequency changes right there. Exact expected values:
+            fs = 1000;
+            f = @(n100, n300) [repmat(100, n100, 1); repmat(300, n300, 1)];
+            cases = {
+                % waveform  frequencies  phase  frames  expected values
+                "saw",      f(10, 5),    0.05,  10:11,  [0.65; -0.65]        % crossed by 0.1
+                "saw",      f(11, 4),    0.05,  12,     -0.7                 % no correction 2 frames on
+                "saw",      f(7, 8),     0.05,  8:9,    [0.5 - (1 - 0.25 / 0.3) ^ 2; -0.9 + (1 - 0.05 / 0.3) ^ 2]
+                "square",   f(10, 5),    0.05,  10:11,  [-0.75; 0.75]        % rising edge
+                "square",   f(10, 5),    0.55,  10:11,  [0.75; -0.75]        % falling edge
+                "triangle", f(10, 5),    0.05,  10:11,  [-0.8 + 1 / 60; -0.8 + 1 / 60]   % corner: 4*0.1*(1/24)
+                "triangle", f(11, 4),    0.05,  12,     -0.4
+                % The pitch changes at frame 10, and the corner falls between frames
+                % 10 and 11, crossed by frame 10's NEW step 0.3: both corrections are
+                % 4*0.3*(1/24) = 0.05, on the naive value -0.4.
+                "triangle", f(9, 6),     0.95,  10:11,  [-0.35; -0.35]
+                };
+            for k = 1:size(cases, 1)
+                [wf, freq, ph, frames, expected] = cases{k, :};
+                y = bpm.dsp.polyblepOsc(wf, freq, fs, numel(freq), ph);
+                testCase.verifyEqual(y(frames), expected, "AbsTol", 1e-12, "Case " + k + " (" + wf + ")");
+            end
+        end
+
+        function prevFreqHzSmoothsAJumpAtTheBlockStart(testCase)
+            % A pitch change exactly at a block boundary, with a saw jump between the
+            % two blocks. 441 Hz at 44.1 kHz is 0.01 cycles per sample, so 1000 frames
+            % are exactly 10 cycles and the jump falls half a sample before block 2.
+            fs = 44100;
+            whole = bpm.dsp.polyblepOsc("saw", [repmat(441, 1000, 1); repmat(661.5, 1000, 1)], fs, 2000, 0.005);
+            [y1, ph] = bpm.dsp.polyblepOsc("saw", 441, fs, 1000, 0.005);
+            y2 = bpm.dsp.polyblepOsc("saw", 661.5, fs, 1000, ph, PrevFreqHz=441);
+            testCase.verifyEqual([y1; y2], whole, "AbsTol", 1e-9);
+            % Without PrevFreqHz the first sample of block 2 is corrected as if the
+            % pitch hadn't changed, which is noticeably different there.
+            guess = bpm.dsp.polyblepOsc("saw", 661.5, fs, 1000, ph);
+            testCase.verifyGreaterThan(abs(guess(1) - whole(1001)), 0.01);
+            testCase.verifyEqual(guess(2:end), y2(2:end), "AbsTol", 1e-12, "Only the first sample differs.");
+        end
+
+        function squareNeverSpikesFromRounding(testCase)
+            % At some round frequencies the phase lands on the largest number just
+            % below 0.5. That sample sits on the falling edge and must be its
+            % midpoint (0), not 2. (450 Hz at 44.1 kHz hits it at frame 50.)
+            y = bpm.dsp.polyblepOsc("square", 450, 44100, 50);
+            testCase.verifyEqual(y(50), 0, "AbsTol", 1e-9);
+            for c = {{100, 48000}, {200, 48000}, {450, 44100}, {225, 44100}, {1000, 96000}}
+                [f0, rate] = c{1}{:};
+                y = bpm.dsp.polyblepOsc("square", f0, rate, rate);
+                testCase.verifyLessThanOrEqual(max(abs(y)), 1 + 1e-9, f0 + " Hz at " + rate);
+            end
         end
 
         function zeroFrequencyHoldsStill(testCase, waveform, startPhase)
@@ -195,6 +246,9 @@ classdef DspOscillatorTest < BpmTestCase
             testCase.verifyError(@() bpm.dsp.polyblepOsc("saw", 440, 44100, 10, 1), "MATLAB:validators:mustBeInRange");
             testCase.verifyError(@() bpm.dsp.polyblepOsc("saw", 440, 44100, 2.5), "MATLAB:validators:mustBeInteger");
             testCase.verifyError(@() bpm.dsp.polyblepOsc("saw", Inf, 44100, 10), "MATLAB:validators:mustBeFinite");
+            testCase.verifyError(@() bpm.dsp.polyblepOsc("saw", 440, Inf, 10), "MATLAB:validators:mustBeFinite");
+            testCase.verifyError(@() bpm.dsp.polyblepOsc("saw", 440, 44100, 10, PrevFreqHz=22050), "bpm:dsp:polyblepOsc:aboveNyquist");
+            testCase.verifyError(@() bpm.dsp.polyblepOsc("saw", 440, 44100, 10, PrevFreqHz=[1 2]), "MATLAB:validators:mustBeScalarOrEmpty");
         end
     end
 

@@ -22,9 +22,11 @@ function [b, a] = biquadCoeffs(type, f0, q, fs, gainDb)
 %   gainDb  boost (+) or cut (-) in dB; used only by peaking and the shelves.
 %
 %   For bandpass and notch, q sets the width: the band between the two -3 dB
-%   points is f0/q wide (roughly). For peaking, it sets the width between the
-%   two points where the boost is half of gainDb. For the shelves, larger q makes
-%   the change from one level to the other steeper (with a small bump).
+%   points is about f0/q wide when f0 is well below fs/4 (narrower close to
+%   fs/2). For peaking, q sets the width between the two points where the boost
+%   is half of gainDb. For the shelves, larger q makes the change from one level
+%   to the other steeper: up to q = 1/sqrt(2) there is no bump, but above that
+%   the response overshoots, by several dB once q is 2 or more.
 %
 %   A biquad computes each output sample from the current input, the two
 %   previous inputs and the two previous outputs:

@@ -1,12 +1,17 @@
 classdef DspBiquadTest < BpmTestCase
-    % Tests for bpm.dsp.biquadCoeffs. Each response is MEASURED: run an impulse
+    % Tests for bpm.dsp.biquadCoeffs. Most responses are MEASURED: run an impulse
     % through filter() and take the Fourier transform of what comes out (the
-    % "frequency response" says how much each frequency is boosted or cut).
+    % "frequency response" says how much each frequency is boosted or cut). The
+    % Cookbook test computes the response straight from the coefficients, and a
+    % few tests check the coefficients themselves.
     %
     % MATLAB features used below:
     %   properties (TestParameter)  a test that takes fs runs once per rate.
     %   @() expr   makes a small unnamed function; verifyError calls it.
     %   1j         the imaginary unit (sqrt(-1)), for complex frequency responses.
+    %   for type = ["a", "b"]   loops over the elements of a string array.
+    %   "q=" + q   + joins text, turning the number q into text first.
+    %   polyval(b, z)   evaluates b(1)*z^2 + b(2)*z + b(3) at every z.
     %   methods (Static)  helper functions of this test class, called as
     %              DspBiquadTest.gainDb(...).
 
@@ -117,6 +122,8 @@ classdef DspBiquadTest < BpmTestCase
             for type = ["peaking", "lowshelf", "highshelf"]
                 [b, a] = bpm.dsp.biquadCoeffs(type, 1000, 1, fs, 0);
                 testCase.verifyEqual(b, a, "AbsTol", 1e-12, type + " with 0 dB is a plain wire");
+                [b, a] = bpm.dsp.biquadCoeffs(type, 1000, 1, fs);     % gainDb left out
+                testCase.verifyEqual(b, a, "AbsTol", 1e-12, type + ": gainDb defaults to 0");
             end
         end
 
@@ -152,6 +159,8 @@ classdef DspBiquadTest < BpmTestCase
             testCase.verifyError(@() bpm.dsp.biquadCoeffs("peaking", 1000, 1, 44100, Inf), "MATLAB:validators:mustBeFinite");
             testCase.verifyError(@() bpm.dsp.biquadCoeffs("lowpass", 1000, Inf, 44100), "MATLAB:validators:mustBeFinite");
             testCase.verifyError(@() bpm.dsp.biquadCoeffs("lowpass", 1000, 1, 0), "MATLAB:validators:mustBePositive");
+            testCase.verifyError(@() bpm.dsp.biquadCoeffs("lowpass", 1000, 1, Inf), "MATLAB:validators:mustBeFinite");
+            testCase.verifyError(@() bpm.dsp.biquadCoeffs("peaking", 1000, 1, 44100, 3i), "MATLAB:validators:mustBeReal");
         end
     end
 

@@ -11,6 +11,8 @@ classdef DspAdsrTest < BpmTestCase
     %                adsr(args{:}, 10) is adsr(args{1}, args{2}, ..., 10).
     %   bad{k, 1}    curly braces take the value OUT of row k, column 1 of a cell.
     %   [~, done]    ~ throws away the first output; we only want the second.
+    %   properties (Constant)  a fixed value shared by all tests: testCase.tol.
+    %   "Argument " + k   + joins text, turning the number k into text first.
 
     properties (TestParameter)
         fs = {44100, 96000}   % every test that takes fs runs at both rates
@@ -110,13 +112,53 @@ classdef DspAdsrTest < BpmTestCase
         function blocksJoinUpExactly(testCase, fs)
             % Rendering one note in blocks with StartFrame gives the same envelope
             % as rendering it all at once (needed by block-based instruments).
-            args = {0.02, 0.05, 0.6, 0.1, fs, round(0.15 * fs)};
-            whole = bpm.dsp.adsr(args{:}, 3 * 1024 + 300);
-            blocks = [bpm.dsp.adsr(args{:}, 1024, StartFrame=0)
-                      bpm.dsp.adsr(args{:}, 1024, StartFrame=1024)
-                      bpm.dsp.adsr(args{:}, 1024, StartFrame=2048)
-                      bpm.dsp.adsr(args{:}, 300, StartFrame=3072)];
+            % Released at 50 ms with a 30 ms release, so the blocks cover attack,
+            % decay, sustain, a release that starts mid-block, and silence after.
+            gate = round(0.05 * fs); r = round(0.03 * fs);
+            args = {0.01, 0.02, 0.6, r / fs, fs, gate};
+            total = gate + r + 700;
+            whole = bpm.dsp.adsr(args{:}, total);
+            blocks = zeros(total, 1);
+            for first = 0:1000:total - 1              % first frame of each block
+                count = min(1000, total - first);
+                blocks(first + 1:first + count) = bpm.dsp.adsr(args{:}, count, StartFrame=first);
+            end
             testCase.verifyEqual(blocks, whole);
+            testCase.verifyLessThan(whole(gate + round(r / 2)), 0.6, "The release really is inside the span.");
+            testCase.verifyEqual(whole(end), 0, "So is the silence after it.");
+        end
+
+        function releaseDuringDecayIsAStraightLine(testCase, fs)
+            a = round(0.01 * fs); d = round(0.1 * fs); r = round(0.3 * fs);
+            gate = a + d / 2;                           % halfway from 1 down to 0.2: level 0.6
+            env = bpm.dsp.adsr(a / fs, d / fs, 0.2, r / fs, fs, gate, gate + r + 1);
+            k = (0:r)';
+            testCase.verifyEqual(env(gate + 1 + k), 0.6 * (1 - k / r), "AbsTol", testCase.tol);
+        end
+
+        function fractionalAttackAndDecayTogether(testCase)
+            fs = 44100;                                 % 0.1 ms = 4.41 frames
+            env = bpm.dsp.adsr(0.0001, 0.0001, 0.5, 0.1, fs, Inf, 12);
+            n = (0:11)';
+            expected = repmat(0.5, 12, 1);
+            expected(n < 4.41) = n(n < 4.41) / 4.41;
+            inDecay = n >= 4.41 & n < 8.82;
+            expected(inDecay) = 1 - 0.5 * (n(inDecay) - 4.41) / 4.41;
+            testCase.verifyEqual(env, expected, "AbsTol", testCase.tol);
+        end
+
+        function releaseShorterThanAFrame(testCase)
+            % Half a frame of release: the level holds at the gate frame, then is 0.
+            fs = 44100;
+            [env, done] = bpm.dsp.adsr(0, 0, 1, 0.5 / fs, fs, 10, 12);
+            testCase.verifyEqual(env(11:12), [1; 0]);
+            testCase.verifyTrue(done);
+            [~, done] = bpm.dsp.adsr(0, 0, 1, 0.5 / fs, fs, 10, 11);
+            testCase.verifyFalse(done, "The release ends half a frame after frame 10.");
+            % Even 0.3 of a frame is a real (very short) release, not "no release":
+            % the gate frame still has the full level.
+            env = bpm.dsp.adsr(0, 0, 1, 0.3 / fs, fs, 10, 12);
+            testCase.verifyEqual(env(11:12), [1; 0]);
         end
 
         function reportsWhenTheNoteHasFinished(testCase, fs)
@@ -142,12 +184,33 @@ classdef DspAdsrTest < BpmTestCase
             testCase.verifyEqual(env(end), 0);
             [~, done] = bpm.dsp.adsr(a / fs, d / fs, 0, 0.5, fs, Inf, a + d);
             testCase.verifyFalse(done, "Still decaying one frame earlier.");
-            % Released during the decay: the release decides when it ends.
-            r = round(0.05 * fs); gate = a + d / 2;
-            [~, done] = bpm.dsp.adsr(a / fs, d / fs, 0, r / fs, fs, gate, a + d + 1);
-            testCase.verifyEqual(done, a + d >= gate + r, "Finished only once the release has played out.");
+
+            % Rendered in blocks (StartFrame), it is the same rule.
+            [~, done] = bpm.dsp.adsr(a / fs, d / fs, 0, 0.5, fs, Inf, 10, StartFrame=a + d);
+            testCase.verifyTrue(done, "A block that reaches the end of the decay.");
+            [~, done] = bpm.dsp.adsr(a / fs, d / fs, 0, 0.5, fs, Inf, 10, StartFrame=a + d - 10);
+            testCase.verifyFalse(done, "A block that ends just before it.");
+
+            % Released halfway down the decay, with a release (0.5 s) longer than
+            % the rest of the decay (0.1 s): the release decides, so the note is
+            % still sounding when the decay alone would have reached 0.
+            r = round(0.5 * fs); gate = a + d / 2;
+            [env, done] = bpm.dsp.adsr(a / fs, d / fs, 0, r / fs, fs, gate, a + d + 1);
+            testCase.verifyEqual(env(end), 0.5 * (1 - (d / 2) / r), "AbsTol", testCase.tol, "Still at 0.4.");
+            testCase.verifyFalse(done, "Not finished while the release is still sounding.");
             [~, done] = bpm.dsp.adsr(a / fs, d / fs, 0, r / fs, fs, gate, gate + r + 1);
+            testCase.verifyTrue(done, "Finished once the release has played out.");
+            [~, done] = bpm.dsp.adsr(a / fs, d / fs, 0, r / fs, fs, gate, gate + r);
+            testCase.verifyFalse(done, "One frame before that.");
+
+            % Released exactly when the decay reaches 0: already silent, so finished.
+            [env, done] = bpm.dsp.adsr(a / fs, d / fs, 0, 0.1, fs, a + d, a + d + 1);
             testCase.verifyTrue(done);
+            testCase.verifyEqual(env(end), 0);
+
+            % A tiny but non-zero sustain is never "finished" while held.
+            [~, done] = bpm.dsp.adsr(a / fs, d / fs, 1e-6, 0.5, fs, Inf, 2 * (a + d));
+            testCase.verifyFalse(done);
         end
 
         function alwaysBetweenZeroAndOne(testCase, fs)
@@ -187,6 +250,7 @@ classdef DspAdsrTest < BpmTestCase
             testCase.verifyError(@() bpm.dsp.adsr(ok{:}, StartFrame=-1), "MATLAB:validators:mustBeNonnegative");
             testCase.verifyError(@() bpm.dsp.adsr(ok{:}, StartFrame=0.5), "MATLAB:validators:mustBeInteger");
             testCase.verifyError(@() bpm.dsp.adsr(ok{:}, StartLevel=1.2), "MATLAB:validators:mustBeInRange");
+            testCase.verifyError(@() bpm.dsp.adsr(ok{:}, StartLevel=-0.1), "MATLAB:validators:mustBeInRange");
         end
     end
 end

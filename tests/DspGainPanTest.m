@@ -20,6 +20,15 @@ classdef DspGainPanTest < BpmTestCase
             testCase.verifySize(bpm.dsp.dbToGain(zeros(3, 1)), [3 1]);
         end
 
+        function dbToGainAlwaysReturnsDouble(testCase)
+            % Integer types would do integer arithmetic (-6/20 rounds to 0, giving 1),
+            % so the input is converted to double first.
+            g = bpm.dsp.dbToGain(int8(-6));
+            testCase.verifyClass(g, "double");
+            testCase.verifyEqual(g, 10 ^ (-6 / 20), "AbsTol", 1e-12);
+            testCase.verifyClass(bpm.dsp.dbToGain(single(3)), "double");
+        end
+
         function dbToGainRejectsNaNAndComplex(testCase)
             testCase.verifyError(@() bpm.dsp.dbToGain(NaN), "MATLAB:validators:mustBeNonNan");
             testCase.verifyError(@() bpm.dsp.dbToGain(1i), "MATLAB:validators:mustBeReal");

@@ -18,13 +18,16 @@ function [env, isFinished] = adsr(attack, decay, sustain, release, fs, gateFrame
 %   audio in blocks (PLAN.md decision D5) uses this to get one block's piece of a
 %   note's envelope, with no envelope "state" to remember between blocks: the
 %   envelope is a pure function of how many frames have passed since note-on.
-%   That only works if the instrument passes the SAME attack/decay/sustain/
-%   release for every block of a note: decide them at note-on and keep them.
-%   (Changing them halfway re-draws the whole curve, which makes the level jump.)
+%   That only works if the instrument passes the SAME attack, decay, sustain,
+%   release, fs and StartLevel for every block of a note: decide them at
+%   note-on and keep them. (Changing them halfway re-draws the whole curve,
+%   which makes the level jump.)
 %
 %   env = bpm.dsp.adsr(..., StartLevel=L) starts the attack from level L instead
 %   of 0. Use it to restart a note that is still sounding (a retrigger, or a
-%   voice "stolen" for a new note) from its current level, without a click.
+%   voice "stolen" for a new note) from its current level, without a click:
+%   L is the level at the moment of the restart, and stays the same for every
+%   block of the new note.
 %
 %   [env, isFinished] = bpm.dsp.adsr(...) also returns true once the envelope is
 %   silent for good by the last requested frame (the release has finished, or a
@@ -78,6 +81,7 @@ function [env, isFinished] = adsr(attack, decay, sustain, release, fs, gateFrame
     % The note is silent for good once the release has played out, or, with a
     % sustain level of 0, once the decay has reached 0 (if the key wasn't let go
     % before that: then the release decides).
+    % (&& means "and", checking the next part only if the previous one is true.)
     lastFrame = options.StartFrame + totalFrames - 1;
     releaseDone = lastFrame >= gateFrames + r;
     decayedToSilence = sustain == 0 && gateFrames >= a + d && lastFrame >= a + d;
@@ -85,9 +89,11 @@ function [env, isFinished] = adsr(attack, decay, sustain, release, fs, gateFrame
 end
 
 function level = heldLevel(n, a, d, sustain, startLevel)
-% Envelope level at frame(s) N while the key is held (no release yet).
+% Envelope level at frame(s) N while the key is held (no release yet). This is a
+% "local function": a helper only this file can call.
     level = repmat(sustain, size(n));          % default: the sustain level
     inAttack = n < a;
+    % & is the element-by-element "and" for whole arrays (&& works on single values).
     level(inAttack) = startLevel + (1 - startLevel) * n(inAttack) / a;   % startLevel -> 1
     inDecay = n >= a & n < a + d;
     level(inDecay) = 1 - (1 - sustain) * (n(inDecay) - a) / d;          % 1 -> sustain

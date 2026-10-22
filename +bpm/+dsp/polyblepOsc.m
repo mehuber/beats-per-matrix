@@ -15,6 +15,12 @@ function [y, phase] = polyblepOsc(waveform, freqHz, fs, numFrames, phase, option
 %   every sample (for vibrato or pitch slides). It must be at least 0 and below
 %   fs/2 (the Nyquist frequency, the highest frequency a sample rate can hold).
 %
+%   If the frequency can change from one block to the next, also pass the
+%   frequency the PREVIOUS block ended with, so a jump right at the start of
+%   this block is smoothed correctly:
+%       [y2, ph] = bpm.dsp.polyblepOsc("saw", 660, 44100, 1024, ph, PrevFreqHz=440);
+%   (Without it, the first sample assumes the frequency didn't change.)
+%
 %   Why "PolyBLEP": a saw or square wave JUMPS instantly, and an instant jump
 %   contains frequencies far above fs/2. Sampling folds those back down as
 %   "aliasing", which sounds like harsh, out-of-tune whistles on high notes.
@@ -31,6 +37,7 @@ function [y, phase] = polyblepOsc(waveform, freqHz, fs, numFrames, phase, option
     %   counts too); {mustBe...} = rules the value must pass; "= 0" = the default
     %   used when the input is left out; "exclude-upper" = the range excludes 1.
     %   options.AntiAlias declares an optional name-value input: AntiAlias=false.
+    %   PrevFreqHz defaults to [] (empty), meaning "not given".
     arguments
         waveform (1,1) string {mustBeMember(waveform, ["sine", "saw", "square", "triangle"])}
         freqHz (:,1) double {mustBeReal, mustBeFinite, mustBeNonnegative}
@@ -38,19 +45,22 @@ function [y, phase] = polyblepOsc(waveform, freqHz, fs, numFrames, phase, option
         numFrames (1,1) double {mustBeInteger, mustBeNonnegative}
         phase (1,1) double {mustBeInRange(phase, 0, 1, "exclude-upper")} = 0
         options.AntiAlias (1,1) logical = true
+        options.PrevFreqHz double {mustBeScalarOrEmpty, mustBeReal, mustBeFinite, mustBeNonnegative} = []
     end
     if ~(isscalar(freqHz) || numel(freqHz) == numFrames)
         error("bpm:dsp:polyblepOsc:freqSize", ...
             "freqHz must be one number or a %d x 1 column (one per frame), not %d values.", ...
             numFrames, numel(freqHz));
     end
-    if any(freqHz >= fs / 2)
+    % || means "or", checking the right side only if the left side is false.
+    if any(freqHz >= fs / 2) || any(options.PrevFreqHz >= fs / 2)
         error("bpm:dsp:polyblepOsc:aboveNyquist", ...
-            "freqHz must be below fs/2 = %g Hz (the highest frequency fs can hold).", fs / 2);
+            "freqHz and PrevFreqHz must be below fs/2 = %g Hz (the highest frequency fs can hold).", fs / 2);
     end
 
     % dt = how far through a cycle each sample moves (cycles per sample).
-    % "dt .* ones(numFrames, 1)" turns a single value into one value per frame.
+    % "dt .* ones(numFrames, 1)" turns a single value into one value per frame
+    % (.* multiplies element by element).
     dt = (freqHz / fs) .* ones(numFrames, 1);
 
     % t = position within the cycle (0 to just below 1) at every frame, and
@@ -60,26 +70,41 @@ function [y, phase] = polyblepOsc(waveform, freqHz, fs, numFrames, phase, option
     if isscalar(freqHz)
         % Fixed frequency: frame k is k steps of dt from the start. Multiplying
         % (rather than adding dt up one frame at a time) avoids building up
-        % rounding error, so rendering in small or large blocks gives (almost)
-        % exactly the same result even for very long notes.
+        % rounding error, so rendering in small or large blocks gives the same
+        % result to about 1e-10 even for long notes.
         steps = phase + (0:numFrames)' * (freqHz / fs);
     else
         % Changing frequency: add up each frame's step (cumsum = running total).
+        % Rounding builds up slowly here: about 1e-8 over 10 seconds.
         steps = phase + [0; cumsum(dt)];
     end
     t = reshape(mod(steps(1:numFrames), 1), numFrames, 1);   % always a column
     phase = mod(steps(end), 1);
 
-    % The PolyBLEP correction on the sample just AFTER a jump measures how far
-    % past the jump it is, in samples: t / (the step that crossed the jump). That
-    % step is the PREVIOUS frame's dt, which matters when the frequency changes
-    % from sample to sample. (The first frame of a block uses its own dt; the
-    % previous block's last step isn't known here. The difference is tiny.)
+    % A jump (or corner) between frame k-1 and frame k is crossed by the step
+    % dt(k-1). The correction on frame k, just AFTER the jump, needs that step,
+    % so make dtPrev = dt shifted down by one frame. Frame 1's previous step
+    % belongs to the previous block: PrevFreqHz if the caller gave it.
     if numFrames > 0
-        dtPrev = [dt(1); dt(1:end - 1)];   % dt shifted down by one frame
+        if isempty(options.PrevFreqHz)
+            firstPrev = dt(1);                 % assume no change at the block start
+        else
+            firstPrev = options.PrevFreqHz / fs;
+        end
+        dtPrev = [firstPrev; dt(1:end - 1)];
     else
-        dtPrev = dt;                       % nothing to render
+        dtPrev = dt;                           % nothing to render
     end
+
+    % Position relative to the second edge at t = 0.5 (the square's fall, the
+    % triangle's peak), shifted so that edge sits at 0 like the first one.
+    % Subtracting 0.5 from t >= 0.5 is exact. Adding 0.5 to t < 0.5 can round up
+    % to exactly 1, which the corrections below rightly treat as "just before"
+    % the edge. (mod(t + 0.5, 1) would wrap that 1 to 0, "just after", and put
+    % a spike of 2 in the square wave.)
+    t2 = t + 0.5;
+    secondHalf = t >= 0.5;
+    t2(secondHalf) = t(secondHalf) - 0.5;
 
     switch waveform
         case "sine"
@@ -91,19 +116,23 @@ function [y, phase] = polyblepOsc(waveform, freqHz, fs, numFrames, phase, option
             end
         case "square"
             y = ones(numFrames, 1);        % +1 for the first half of the cycle,
-            y(t >= 0.5) = -1;              % -1 for the second half
+            y(secondHalf) = -1;            % -1 for the second half
             if options.AntiAlias
-                y = y + blep(t, dt, dtPrev) - blep(mod(t + 0.5, 1), dt, dtPrev);
+                y = y + blep(t, dt, dtPrev) - blep(t2, dt, dtPrev);
             end
         case "triangle"
             y = 1 - 4 * abs(t - 0.5);      % -1 at the cycle start, +1 halfway
             if options.AntiAlias
-                % Corner size = change of slope. The slope is +-4 per cycle,
-                % i.e. +-4*dt per sample, so each corner changes it by 8*dt.
-                y = y + 4 * dt .* (blamp(t, dt, dtPrev) - blamp(mod(t + 0.5, 1), dt, dtPrev));
+                % The slope is +-4 per cycle, so each corner changes it by 8 per
+                % cycle. blamp turns that into a change per sample, using the step
+                % that crossed the corner, and returns (change / 2) times its curve.
+                y = y + 4 * (blamp(t, dt, dtPrev) - blamp(t2, dt, dtPrev));
             end
     end
 end
+
+% The two functions below are "local functions": helpers that only this file
+% can call. They work on whole columns at once (.* ./ .^ act element by element).
 
 function r = blep(t, dt, dtPrev)
 % PolyBLEP correction for an upward jump of size 2 at t = 0 (the start of a
@@ -122,12 +151,13 @@ end
 function r = blamp(t, dt, dtPrev)
 % PolyBLAMP correction for a corner at t = 0: the running total (integral) of
 % the PolyBLEP correction above, which is why it is a cubic instead of a square.
-% Scaled for a change of slope of 2 per sample; callers multiply by (change / 2).
+% Each side is scaled by the step that crossed the corner (dt before it, dtPrev
+% after it): that converts a slope change "per cycle" into one "per sample".
     r = zeros(size(t));
     after = t < dtPrev;
     x = t(after) ./ dtPrev(after);
-    r(after) = (1 - x) .^ 3 / 3;
+    r(after) = dtPrev(after) .* (1 - x) .^ 3 / 3;
     before = t > 1 - dt;
     x = (t(before) - 1) ./ dt(before);
-    r(before) = (x + 1) .^ 3 / 3;
+    r(before) = dt(before) .* (x + 1) .^ 3 / 3;
 end
