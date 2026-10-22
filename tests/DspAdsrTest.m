@@ -211,6 +211,32 @@ classdef DspAdsrTest < BpmTestCase
             % A tiny but non-zero sustain is never "finished" while held.
             [~, done] = bpm.dsp.adsr(a / fs, d / fs, 1e-6, 0.5, fs, Inf, 2 * (a + d));
             testCase.verifyFalse(done);
+
+            % A retriggered pluck (StartLevel > 0) still finishes after its decay.
+            [env, done] = bpm.dsp.adsr(a / fs, d / fs, 0, 0.5, fs, Inf, a + d + 1, StartLevel=0.3);
+            testCase.verifyEqual(env(end), 0);
+            testCase.verifyTrue(done);
+        end
+
+        function finishedUsesTheExactFractionalBoundary(testCase, fs)
+            % Stage lengths and the gate can be fractions of a frame, so "finished"
+            % must compare with the exact boundary, not a rounded one. (x / fs
+            % seconds is x frames.)
+            f = 1 / fs;
+            % Sustain 0, key held: the decay ends at frame 2.205 + 2.205 = 4.41.
+            [env, done] = bpm.dsp.adsr(2.205 * f, 2.205 * f, 0, 0.1, fs, Inf, 5);   % frames 0-4
+            testCase.verifyGreaterThan(env(end), 0, "Frame 4 is still decaying.");
+            testCase.verifyFalse(done);
+            [env, done] = bpm.dsp.adsr(2.205 * f, 2.205 * f, 0, 0.1, fs, Inf, 6);   % frames 0-5
+            testCase.verifyEqual(env(end), 0);
+            testCase.verifyTrue(done, "Frame 5 is past 4.41.");
+            % Released at frame 4.2, during a 4.41-frame attack, with a 44.1-frame
+            % release: it ends at frame 48.3.
+            [env, done] = bpm.dsp.adsr(4.41 * f, 0, 0, 44.1 * f, fs, 4.2, 49);      % frames 0-48
+            testCase.verifyGreaterThan(env(end), 0, "Frame 48 is still releasing.");
+            testCase.verifyFalse(done);
+            [~, done] = bpm.dsp.adsr(4.41 * f, 0, 0, 44.1 * f, fs, 4.2, 50);        % frames 0-49
+            testCase.verifyTrue(done, "Frame 49 is past 48.3.");
         end
 
         function alwaysBetweenZeroAndOne(testCase, fs)

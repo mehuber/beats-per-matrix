@@ -112,7 +112,8 @@ function [y, phase] = polyblepOsc(waveform, freqHz, fs, numFrames, phase, option
         case "saw"
             y = 2 * t - 1;                 % ramps -1 -> +1, then drops back
             if options.AntiAlias
-                y = y - blep(t, dt, dtPrev);
+                % kink(...): see the note on pitch changes below the switch.
+                y = y - blep(t, dt, dtPrev) + kink(2, dt, dtPrev);
             end
         case "square"
             y = ones(numFrames, 1);        % +1 for the first half of the cycle,
@@ -123,12 +124,29 @@ function [y, phase] = polyblepOsc(waveform, freqHz, fs, numFrames, phase, option
         case "triangle"
             y = 1 - 4 * abs(t - 0.5);      % -1 at the cycle start, +1 halfway
             if options.AntiAlias
-                % The slope is +-4 per cycle, so each corner changes it by 8 per
-                % cycle. blamp turns that into a change per sample, using the step
-                % that crossed the corner, and returns (change / 2) times its curve.
-                y = y + 4 * (blamp(t, dt, dtPrev) - blamp(t2, dt, dtPrev));
+                % The slope is +4 per cycle on the rising half and -4 on the
+                % falling half, so each corner changes it by 8 per cycle. blamp
+                % returns the correction for a change of 2 per cycle (its curve
+                % times the step that crossed the corner), so multiply by 8/2 = 4.
+                rising = 1 - 2 * secondHalf;   % +1 on the rising half, -1 falling
+                y = y + 4 * (blamp(t, dt, dtPrev) - blamp(t2, dt, dtPrev)) ...
+                      + rising .* kink(4, dt, dtPrev);
             end
     end
+    % Note on pitch changes: the saw and triangle are made of straight lines whose
+    % slope is (slope per cycle) x (step per sample). So when the step changes at a
+    % frame, the waveform also bends a little exactly there: one more, very small
+    % corner. kink() smooths it the same way blamp smooths the triangle's corners.
+    % (With a fixed frequency it is always 0.) For the triangle it also keeps the
+    % output from depending on rounding when a corner lands right on that frame.
+end
+
+function r = kink(slopePerCycle, dt, dtPrev)
+% Correction for the bend a pitch change makes at a frame: the slope changes by
+% slopePerCycle x (dt - dtPrev) per sample, exactly AT the frame (x = 0). For a
+% corner at x = 0, the PolyBLAMP correction is (change of slope) / 6 on that
+% frame only (the blamp curve at x = 0 is 1/3, times change / 2).
+    r = slopePerCycle * (dt - dtPrev) / 6;
 end
 
 % The two functions below are "local functions": helpers that only this file
@@ -151,8 +169,9 @@ end
 function r = blamp(t, dt, dtPrev)
 % PolyBLAMP correction for a corner at t = 0: the running total (integral) of
 % the PolyBLEP correction above, which is why it is a cubic instead of a square.
-% Each side is scaled by the step that crossed the corner (dt before it, dtPrev
-% after it): that converts a slope change "per cycle" into one "per sample".
+% The cubic is the correction for a change of slope of 2 per SAMPLE. Multiplying
+% by the step that crossed the corner (dt before it, dtPrev after it) makes it
+% the correction for a change of 2 per CYCLE; callers multiply by (change / 2).
     r = zeros(size(t));
     after = t < dtPrev;
     x = t(after) ./ dtPrev(after);

@@ -159,7 +159,7 @@ classdef DspOscillatorTest < BpmTestCase
             f = [repmat(300, n / 2, 1); repmat(600, n / 2, 1)];
             [y, ph] = bpm.dsp.polyblepOsc("saw", f, fs, n);
             [a, phA] = bpm.dsp.polyblepOsc("saw", 300, fs, n / 2);
-            [b, phB] = bpm.dsp.polyblepOsc("saw", 600, fs, n / 2, phA);
+            [b, phB] = bpm.dsp.polyblepOsc("saw", 600, fs, n / 2, phA, PrevFreqHz=300);
             testCase.verifyEqual(y, [a; b], "AbsTol", 1e-9);
             testCase.verifyEqual(ph, phB, "AbsTol", 1e-9);
         end
@@ -168,22 +168,29 @@ classdef DspOscillatorTest < BpmTestCase
             % At fs = 1000, f = 100 Hz is a step of 0.1 cycles per sample, and 300 Hz
             % a step of 0.3. A jump or corner between frames k and k+1 is crossed by
             % frame k's step, and BOTH neighbours' corrections must use that step,
-            % even when the frequency changes right there. Exact expected values:
+            % even when the frequency changes right there. On the frame where the
+            % step changes, the saw also gets (dt - dtPrev)/3 = 1/15 and the
+            % triangle +-(2/3)(dt - dtPrev) = +-2/15 for the bend the pitch change
+            % makes (+ on the triangle's rising half). Exact expected values:
             fs = 1000;
             f = @(n100, n300) [repmat(100, n100, 1); repmat(300, n300, 1)];
             cases = {
                 % waveform  frequencies  phase  frames  expected values
-                "saw",      f(10, 5),    0.05,  10:11,  [0.65; -0.65]        % crossed by 0.1
-                "saw",      f(11, 4),    0.05,  12,     -0.7                 % no correction 2 frames on
-                "saw",      f(7, 8),     0.05,  8:9,    [0.5 - (1 - 0.25 / 0.3) ^ 2; -0.9 + (1 - 0.05 / 0.3) ^ 2]
-                "square",   f(10, 5),    0.05,  10:11,  [-0.75; 0.75]        % rising edge
-                "square",   f(10, 5),    0.55,  10:11,  [0.75; -0.75]        % falling edge
-                "triangle", f(10, 5),    0.05,  10:11,  [-0.8 + 1 / 60; -0.8 + 1 / 60]   % corner: 4*0.1*(1/24)
-                "triangle", f(11, 4),    0.05,  12,     -0.4
-                % The pitch changes at frame 10, and the corner falls between frames
-                % 10 and 11, crossed by frame 10's NEW step 0.3: both corrections are
-                % 4*0.3*(1/24) = 0.05, on the naive value -0.4.
-                "triangle", f(9, 6),     0.95,  10:11,  [-0.35; -0.35]
+                "saw",      f(10, 5),    0.05,  10:11,  [0.65; -0.65 + 1 / 15]   % jump crossed by 0.1
+                "saw",      f(11, 4),    0.05,  12,     -0.7 + 1 / 15            % no jump correction here
+                "saw",      f(7, 8),     0.05,  8:9,    [0.5 - (1 - 0.25 / 0.3) ^ 2 + 1 / 15; -0.9 + (1 - 0.05 / 0.3) ^ 2]
+                "square",   f(10, 5),    0.05,  10:11,  [-0.75; 0.75]        % rising edge, crossed by 0.1
+                "square",   f(10, 5),    0.55,  10:11,  [0.75; -0.75]        % falling edge, crossed by 0.1
+                "square",   f(9, 6),     0.95,  10:11,  [-0.75; 0.75]        % rising edge, crossed by the NEW 0.3
+                "square",   f(9, 6),     0.45,  10:11,  [0.75; -0.75]        % falling edge, crossed by the NEW 0.3
+                "square",   f(7, 8),     0.55,  8:9,    [35 / 36; -11 / 36]  % falling edge, crossed by 0.3, off-centre
+                "square",   f(7, 8),     0.05,  8:9,    [-35 / 36; 11 / 36]  % rising edge, crossed by 0.3, off-centre
+                "triangle", f(10, 5),    0.05,  10:11,  [-0.8 + 1 / 60; -0.8 + 1 / 60 + 2 / 15]   % trough, crossed by 0.1
+                "triangle", f(11, 4),    0.05,  12,     -0.4 + 2 / 15
+                "triangle", f(9, 6),     0.95,  10:11,  [-0.35 - 2 / 15; -0.35]   % trough, crossed by the NEW 0.3
+                "triangle", f(10, 5),    0.55,  10:11,  [0.8 - 1 / 60; 0.8 - 1 / 60 - 2 / 15]     % peak, crossed by 0.1
+                "triangle", f(9, 6),     0.45,  10:11,  [0.35 + 2 / 15; 0.35]     % peak, crossed by the NEW 0.3
+                "triangle", f(7, 8),     0.55,  8:9,    [-0.4 / 216 + 2 / 15; 0.8 - 0.4 * 125 / 216]   % peak, off-centre
                 };
             for k = 1:size(cases, 1)
                 [wf, freq, ph, frames, expected] = cases{k, :};
@@ -192,20 +199,86 @@ classdef DspOscillatorTest < BpmTestCase
             end
         end
 
-        function prevFreqHzSmoothsAJumpAtTheBlockStart(testCase)
+        function matchesTheSmoothedNaiveWaveform(testCase, fs)
+            % Independent check of every correction at once. Two-point PolyBLEP and
+            % PolyBLAMP give exactly the naive waveform smoothed by a "tent" (a
+            % triangle 2 samples wide) and then sampled, for any pattern of
+            % frequencies. tentReference computes that smoothing numerically.
+            n = 40;
+            steps = {                            % cycles per sample, frame by frame
+                [repmat(0.1, 13, 1); repmat(0.3, 14, 1); repmat(0.17, 13, 1)]   % pitch steps
+                0.22 + 0.15 * sin(2 * pi * (0:n - 1)' / 9)                       % vibrato
+                (mod((0:n - 1)' * 137, 400) + 20) / 1000                         % jumps every frame
+                [zeros(5, 1); repmat(0.25, 10, 1); zeros(5, 1); repmat(0.09, 20, 1)]   % stops and starts
+                };
+            for k = 1:numel(steps)
+                for ph = [0 0.3 0.75]
+                    for wf = ["saw", "square", "triangle"]
+                        y = bpm.dsp.polyblepOsc(wf, steps{k} * fs, fs, n, ph);
+                        ref = DspOscillatorTest.tentReference(wf, steps{k}, ph);
+                        % The numerical smoothing is accurate to ~5e-4 at a jump
+                        % (saw, square) and ~1e-7 for the triangle's corners.
+                        tol = 1e-3 * (wf ~= "triangle") + 1e-6 * (wf == "triangle");
+                        testCase.verifyEqual(y, ref, "AbsTol", tol, sprintf("%s, pattern %d, phase %g", wf, k, ph));
+                    end
+                end
+            end
+        end
+
+        function halfACycleLaterIsUpsideDown(testCase)
+            % Starting half a cycle later flips a square or triangle upside down, for
+            % any frequencies. This ties the second edge's corrections to the first's.
+            f = [repmat(100, 7, 1); repmat(300, 8, 1); repmat(170, 10, 1)];
+            for wf = ["square", "triangle"]
+                for ph = [0.05 0.2 0.37]
+                    y = bpm.dsp.polyblepOsc(wf, f, 1000, 25, ph);
+                    flipped = bpm.dsp.polyblepOsc(wf, f, 1000, 25, ph + 0.5);
+                    testCase.verifyEqual(flipped, -y, "AbsTol", 1e-9, wf + " from phase " + ph);
+                end
+            end
+        end
+
+        function prevFreqHzSmoothsAJumpAtTheBlockStart(testCase, fs)
             % A pitch change exactly at a block boundary, with a saw jump between the
-            % two blocks. 441 Hz at 44.1 kHz is 0.01 cycles per sample, so 1000 frames
-            % are exactly 10 cycles and the jump falls half a sample before block 2.
-            fs = 44100;
-            whole = bpm.dsp.polyblepOsc("saw", [repmat(441, 1000, 1); repmat(661.5, 1000, 1)], fs, 2000, 0.005);
-            [y1, ph] = bpm.dsp.polyblepOsc("saw", 441, fs, 1000, 0.005);
-            y2 = bpm.dsp.polyblepOsc("saw", 661.5, fs, 1000, ph, PrevFreqHz=441);
+            % two blocks. fs/100 Hz is 0.01 cycles per sample at any rate, so 1000
+            % frames are exactly 10 cycles and the jump falls half a sample before
+            % block 2. The new pitch is 1.5 times higher.
+            f1 = fs / 100;
+            f2 = 1.5 * f1;
+            whole = bpm.dsp.polyblepOsc("saw", [repmat(f1, 1000, 1); repmat(f2, 1000, 1)], fs, 2000, 0.005);
+            [y1, ph] = bpm.dsp.polyblepOsc("saw", f1, fs, 1000, 0.005);
+            y2 = bpm.dsp.polyblepOsc("saw", f2, fs, 1000, ph, PrevFreqHz=f1);
             testCase.verifyEqual([y1; y2], whole, "AbsTol", 1e-9);
             % Without PrevFreqHz the first sample of block 2 is corrected as if the
             % pitch hadn't changed, which is noticeably different there.
-            guess = bpm.dsp.polyblepOsc("saw", 661.5, fs, 1000, ph);
+            guess = bpm.dsp.polyblepOsc("saw", f2, fs, 1000, ph);
             testCase.verifyGreaterThan(abs(guess(1) - whole(1001)), 0.01);
             testCase.verifyEqual(guess(2:end), y2(2:end), "AbsTol", 1e-12, "Only the first sample differs.");
+            % PrevFreqHz also works for a 1-frame block and a per-sample column.
+            testCase.verifyEqual(bpm.dsp.polyblepOsc("saw", f2, fs, 1, ph, PrevFreqHz=f1), whole(1001), "AbsTol", 1e-9);
+            testCase.verifyEqual(bpm.dsp.polyblepOsc("saw", repmat(f2, 1000, 1), fs, 1000, ph, PrevFreqHz=f1), ...
+                whole(1001:end), "AbsTol", 1e-9);
+        end
+
+        function prevFreqHzZeroMeansTheOscillatorWasStopped(testCase)
+            % 0 is a real previous frequency (a stopped LFO starting up), not "not given".
+            whole = bpm.dsp.polyblepOsc("saw", [zeros(5, 1); repmat(100, 10, 1)], 1000, 15, 0.95);
+            [z1, ph] = bpm.dsp.polyblepOsc("saw", 0, 1000, 5, 0.95);
+            z2 = bpm.dsp.polyblepOsc("saw", 100, 1000, 10, ph, PrevFreqHz=0);
+            testCase.verifyEqual([z1; z2], whole, "AbsTol", 1e-12);
+        end
+
+        function triangleCornerOnAPitchChangeIsTheSameEitherWay(testCase)
+            % 441 Hz at 44.1 kHz for 1000 frames is exactly 10 cycles, so block 2
+            % starts right on a corner, and its pitch changes there. Rendering in one
+            % call or in two (with PrevFreqHz) must agree, however rounding falls.
+            fs = 44100;
+            for f2 = [661.5 882 220.5]
+                whole = bpm.dsp.polyblepOsc("triangle", [repmat(441, 1000, 1); repmat(f2, 1000, 1)], fs, 2000);
+                [y1, ph] = bpm.dsp.polyblepOsc("triangle", 441, fs, 1000);
+                y2 = bpm.dsp.polyblepOsc("triangle", f2, fs, 1000, ph, PrevFreqHz=441);
+                testCase.verifyEqual([y1; y2], whole, "AbsTol", 1e-9, "to " + f2 + " Hz");
+            end
         end
 
         function squareNeverSpikesFromRounding(testCase)
@@ -214,7 +287,8 @@ classdef DspOscillatorTest < BpmTestCase
             % midpoint (0), not 2. (450 Hz at 44.1 kHz hits it at frame 50.)
             y = bpm.dsp.polyblepOsc("square", 450, 44100, 50);
             testCase.verifyEqual(y(50), 0, "AbsTol", 1e-9);
-            for c = {{100, 48000}, {200, 48000}, {450, 44100}, {225, 44100}, {1000, 96000}}
+            % Frequencies that hit this rounding case (the old code spiked at each).
+            for c = {{15, 44100}, {30, 44100}, {225, 44100}, {450, 44100}}
                 [f0, rate] = c{1}{:};
                 y = bpm.dsp.polyblepOsc("square", f0, rate, rate);
                 testCase.verifyLessThanOrEqual(max(abs(y)), 1 + 1e-9, f0 + " Hz at " + rate);
@@ -249,6 +323,9 @@ classdef DspOscillatorTest < BpmTestCase
             testCase.verifyError(@() bpm.dsp.polyblepOsc("saw", 440, Inf, 10), "MATLAB:validators:mustBeFinite");
             testCase.verifyError(@() bpm.dsp.polyblepOsc("saw", 440, 44100, 10, PrevFreqHz=22050), "bpm:dsp:polyblepOsc:aboveNyquist");
             testCase.verifyError(@() bpm.dsp.polyblepOsc("saw", 440, 44100, 10, PrevFreqHz=[1 2]), "MATLAB:validators:mustBeScalarOrEmpty");
+            testCase.verifyError(@() bpm.dsp.polyblepOsc("saw", 440, 44100, 10, PrevFreqHz=-1), "MATLAB:validators:mustBeNonnegative");
+            testCase.verifyError(@() bpm.dsp.polyblepOsc("saw", 440, 44100, 10, PrevFreqHz=NaN), "MATLAB:validators:mustBeFinite");
+            testCase.verifyError(@() bpm.dsp.polyblepOsc("saw", 440, 44100, 10, PrevFreqHz=Inf), "MATLAB:validators:mustBeFinite");
         end
     end
 
@@ -282,6 +359,33 @@ classdef DspOscillatorTest < BpmTestCase
                 nearHarmonic = nearHarmonic | abs(f - h) <= 5 * fs / n;
             end
             d = 10 * log10(sum(P(~nearHarmonic)) / sum(P));
+        end
+
+        function y = tentReference(waveform, dt, phase0)
+            % The naive waveform, smoothed by a tent 2 samples wide, sampled at each
+            % frame: y(n) = integral of (1 - |u|) * naive(tau_n + u) for u from -1 to 1.
+            % Frame n sits at time tau = n - 1 (in samples). The phase grows by dt(n)
+            % between frames n and n+1, and by dt(1) before frame 1. The integral is
+            % done numerically with 2000 points per sample (midpoint rule).
+            numPoints = 2000;
+            n = numel(dt);
+            phaseAt = phase0 + [-dt(1); 0; cumsum(dt)];   % phase at tau = -1, 0, 1, ..., n
+            h = 1 / numPoints;
+            u = -1 + h / 2 : h : 1 - h / 2;
+            w = (1 - abs(u)) * h;
+            y = zeros(n, 1);
+            for frame = 1:n
+                tau = (frame - 1) + u;
+                k = min(max(floor(tau), -1), n - 1);     % whole sample before each tau
+                slope = reshape(dt(max(k + 1, 1)), 1, []);
+                t = mod(reshape(phaseAt(k + 2), 1, []) + (tau - k) .* slope, 1);
+                switch waveform
+                    case "saw",      x = 2 * t - 1;
+                    case "square",   x = 1 - 2 * (t >= 0.5);
+                    case "triangle", x = 1 - 4 * abs(t - 0.5);
+                end
+                y(frame) = sum(w .* x);
+            end
         end
 
         function y = renderInBlocks(waveform, f0, fs, n, blockSize)
